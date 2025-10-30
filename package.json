@@ -4,7 +4,7 @@
   "license": "MIT",
   "scripts": {
   "build": "tsc",
-  "start": "node dist/server/index.js"
+  "start": "node server/index.js"
 },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
