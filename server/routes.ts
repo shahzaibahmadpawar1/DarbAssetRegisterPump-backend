@@ -4,7 +4,6 @@ import bcrypt from "bcryptjs";
 import { supabase } from "./supabaseClient";
 import jwt from "jsonwebtoken";
 
-// Register all routes
 export function registerRoutes(app: Express) {
   const JWT_SECRET = process.env.JWT_SECRET || "replace-with-secure-secret";
   const TOKEN_COOKIE_NAME = "token";
@@ -13,8 +12,8 @@ export function registerRoutes(app: Express) {
   // ----------------------------
   // AUTH ROUTES
   // ----------------------------
-  app.post("/api/login", async (req, res) => {
-    console.log("Login attempt:", req.body);
+  app.post("/api/login", async (req: Request, res: Response) => {
+    console.log("🔑 Login attempt:", req.body);
     const { username, password } = req.body as { username: string; password: string };
 
     if (!username || !password) {
@@ -33,41 +32,39 @@ export function registerRoutes(app: Express) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    // Plain text password match (no hashing for now)
+    // Compare password (plain for now; bcrypt recommended)
     if (user.password_hash !== password) {
-      console.log("❌ Password mismatch");
+      console.log("❌ Password mismatch for:", username);
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    // Save session
+    // Save session ID
     (req.session as any).userId = user.id;
 
-    // Issue JWT cookie (so frontend can persist auth across refreshes)
+    // Issue JWT cookie
     try {
       const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
       res.cookie(TOKEN_COOKIE_NAME, token, {
         httpOnly: true,
-        sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
+        secure: true, // ✅ for HTTPS
+        sameSite: "none", // ✅ cross-domain
         maxAge: TOKEN_MAX_AGE,
         path: "/",
       });
     } catch (jwtErr) {
       console.error("JWT sign error:", jwtErr);
-      // continue anyway
     }
 
-    console.log("✅ Login successful for user:", username);
+    console.log("✅ Login successful for:", username);
     return res.json({ ok: true });
   });
 
-  app.post("/api/logout", (req, res) => {
-    // clear JWT cookie and session cookie
+  app.post("/api/logout", (req: Request, res: Response) => {
     try {
       res.clearCookie(TOKEN_COOKIE_NAME, { path: "/" });
       res.clearCookie("connect.sid", { path: "/" });
     } catch (e) {
-      // ignore clearing errors
+      console.warn("Cookie clear error:", e);
     }
     req.session.destroy(() => {
       res.json({ ok: true });
@@ -77,9 +74,9 @@ export function registerRoutes(app: Express) {
   // ----------------------------
   // SESSION / AUTH CHECK
   // ----------------------------
-  app.get("/api/me", async (req, res) => {
+  app.get("/api/me", async (req: Request, res: Response) => {
     try {
-      // 1) check express-session
+      // Check express-session first
       const sessionUserId = (req.session as any)?.userId;
       if (sessionUserId) {
         const { data, error } = await supabase
@@ -87,6 +84,7 @@ export function registerRoutes(app: Express) {
           .select("id, username")
           .eq("id", sessionUserId)
           .maybeSingle();
+
         if (error) {
           console.error("GET /api/me DB error:", error);
           return res.status(500).json({ message: "Database error" });
@@ -94,12 +92,10 @@ export function registerRoutes(app: Express) {
         return res.json({ authenticated: true, user: data ?? { id: sessionUserId } });
       }
 
-      // 2) fallback to JWT cookie (if cookie-parser is used)
+      // Fallback to JWT cookie
       const cookies = (req as any).cookies;
-      const token = cookies?.token;
-      if (!token) {
-        return res.status(401).json({ authenticated: false });
-      }
+      const token = cookies?.[TOKEN_COOKIE_NAME];
+      if (!token) return res.status(401).json({ authenticated: false });
 
       try {
         const decoded = jwt.verify(token, JWT_SECRET) as any;
@@ -111,12 +107,13 @@ export function registerRoutes(app: Express) {
           .select("id, username")
           .eq("id", userId)
           .maybeSingle();
+
         if (error) {
           console.error("GET /api/me DB error:", error);
           return res.status(500).json({ message: "Database error" });
         }
 
-        // sync session for convenience
+        // Sync session
         (req.session as any).userId = userId;
 
         return res.json({ authenticated: true, user: data ?? { id: userId } });
@@ -131,9 +128,9 @@ export function registerRoutes(app: Express) {
   });
 
   // ----------------------------
-  // PUMPS ROUTES (unchanged)
+  // PUMPS ROUTES
   // ----------------------------
-  app.get("/api/pumps", async (_req, res) => {
+  app.get("/api/pumps", async (_req: Request, res: Response) => {
     const { data, error } = await supabase
       .from("pumps")
       .select("*")
@@ -143,7 +140,7 @@ export function registerRoutes(app: Express) {
     return res.json(data);
   });
 
-  app.post("/api/pumps", async (req, res) => {
+  app.post("/api/pumps", async (req: Request, res: Response) => {
     const { name, location, manager } = req.body;
 
     if (!name || !location || !manager) {
@@ -160,7 +157,7 @@ export function registerRoutes(app: Express) {
     return res.status(201).json(data);
   });
 
-  app.put("/api/pumps/:id", async (req, res) => {
+  app.put("/api/pumps/:id", async (req: Request, res: Response) => {
     const { id } = req.params;
     const { name, location, manager } = req.body;
 
@@ -176,7 +173,7 @@ export function registerRoutes(app: Express) {
     return res.json(data);
   });
 
-  app.delete("/api/pumps/:id", async (req, res) => {
+  app.delete("/api/pumps/:id", async (req: Request, res: Response) => {
     const { id } = req.params;
     const { error } = await supabase.from("pumps").delete().eq("id", id);
     if (error) return res.status(500).json({ message: error.message });
@@ -184,9 +181,9 @@ export function registerRoutes(app: Express) {
   });
 
   // ----------------------------
-  // ASSETS ROUTES (unchanged)
+  // ASSETS ROUTES
   // ----------------------------
-  app.get("/api/assets", async (_req, res) => {
+  app.get("/api/assets", async (_req: Request, res: Response) => {
     const { data, error } = await supabase
       .from("assets")
       .select("*")
@@ -196,10 +193,10 @@ export function registerRoutes(app: Express) {
     return res.json(data);
   });
 
-  app.get("/api/assets/pump/:pumpId", async (req, res) => {
+  app.get("/api/assets/pump/:pumpId", async (req: Request, res: Response) => {
     try {
       const { pumpId } = req.params;
-      console.log("Fetching assets for pumpId (raw):", pumpId);
+      console.log("Fetching assets for pumpId:", pumpId);
 
       const pumpIdNum = Number(pumpId);
       const value = isNaN(pumpIdNum) ? pumpId : pumpIdNum;
@@ -211,7 +208,7 @@ export function registerRoutes(app: Express) {
         .order("id", { ascending: false });
 
       if (error) {
-        console.error("❌ Supabase error fetching assets for pump:", pumpId, error);
+        console.error("❌ Supabase error fetching assets:", error);
         return res.status(500).json({ message: error.message });
       }
 
@@ -222,9 +219,8 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.get("/api/assets/:id", async (req, res) => {
+  app.get("/api/assets/:id", async (req: Request, res: Response) => {
     const { id } = req.params;
-
     const { data, error } = await supabase
       .from("assets")
       .select("*")
@@ -244,7 +240,7 @@ export function registerRoutes(app: Express) {
     return res.json(data);
   });
 
-  app.post("/api/assets", async (req, res) => {
+  app.post("/api/assets", async (req: Request, res: Response) => {
     const { pumpId, serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks } = req.body;
 
     if (!pumpId || !asset_name || !assetNumber) {
@@ -255,7 +251,7 @@ export function registerRoutes(app: Express) {
       .from("assets")
       .insert([
         {
-          pumpId: pumpId,
+          pumpId,
           serialNumber,
           asset_name,
           assetNumber,
@@ -276,7 +272,7 @@ export function registerRoutes(app: Express) {
     return res.status(201).json(data);
   });
 
-  app.put("/api/assets/:id", async (req, res) => {
+  app.put("/api/assets/:id", async (req: Request, res: Response) => {
     const { id } = req.params;
     const { serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks } = req.body;
 
@@ -300,7 +296,7 @@ export function registerRoutes(app: Express) {
     return res.json(data);
   });
 
-  app.delete("/api/assets/:id", async (req, res) => {
+  app.delete("/api/assets/:id", async (req: Request, res: Response) => {
     const { id } = req.params;
     const { error } = await supabase.from("assets").delete().eq("id", id);
     if (error) return res.status(500).json({ message: error.message });
