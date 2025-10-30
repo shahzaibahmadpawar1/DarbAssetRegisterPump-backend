@@ -3,10 +3,9 @@
   "version": "1.0.0",
   "license": "MIT",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/server/index.js",
-    "dev": "ts-node-dev --respawn --transpile-only server/index.ts"
-  },
+  "build": "tsc",
+  "start": "node dist/server.js"
+},
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
