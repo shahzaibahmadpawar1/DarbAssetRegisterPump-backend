@@ -1,9 +1,14 @@
 {
   "version": 2,
   "builds": [
-    { "src": "src/server.ts", "use": "@vercel/node" }
+    { "src": "dist/server/index.js", "use": "@vercel/node" }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "src/server.ts" }
-  ]
+    { "src": "/(.*)", "dest": "dist/server/index.js" }
+  ],
+  "env": {
+    "FRONTEND_ORIGIN": "https://azharalibuttar.com",
+    "JWT_SECRET": "super-secret-key",
+    "SESSION_SECRET": "super-session-key"
+  }
 }
