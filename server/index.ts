@@ -10,7 +10,7 @@ import "dotenv/config";
 const app = express();
 
 // 🔹 Frontend hosted on CPanel domain
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://azharalibuttar.com/dsassetregister-frontend/";
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://azharalibuttar.com";
 
 // 🔹 Secret for JWT
 const JWT_SECRET = process.env.JWT_SECRET || "replace-with-secure-secret";
