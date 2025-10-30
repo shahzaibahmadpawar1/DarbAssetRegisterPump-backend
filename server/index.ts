@@ -13,8 +13,7 @@ const app = express();
 
 // IMPORTANT: when using credentials (cookies) you cannot use origin: "*"
 // set frontend origin via env or default to localhost:5173
-const FRONTEND_ORIGIN =
-  process.env.FRONTEND_ORIGIN || "https://azharalibuttar.com"; // your live frontend domain
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://azharalibuttar.com"; // your live frontend domain
 const JWT_SECRET = process.env.JWT_SECRET || "replace-with-secure-secret";
 
 app.use(
