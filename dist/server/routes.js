@@ -4,9 +4,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerRoutes = registerRoutes;
+const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const supabaseClient_1 = require("./supabaseClient");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-// Register all routes
 function registerRoutes(app) {
     const JWT_SECRET = process.env.JWT_SECRET || "replace-with-secure-secret";
     const TOKEN_COOKIE_NAME = "token";
@@ -14,134 +14,68 @@ function registerRoutes(app) {
     // ----------------------------
     // AUTH ROUTES
     // ----------------------------
-    app.get("/", (req, res) => {
-  res.send("Login works sab theek hai!");
-});
-
     app.post("/api/login", async (req, res) => {
-        console.log("Login attempt:", req.body);
         const { username, password } = req.body;
         if (!username || !password) {
             return res.status(400).json({ message: "Missing credentials" });
         }
-        // Fetch user from Supabase
         const { data: user, error } = await supabaseClient_1.supabase
             .from("users")
             .select("id, password_hash")
             .eq("username", username)
             .maybeSingle();
-        if (error || !user) {
-            console.log("❌ User not found or query error:", error?.message);
+        if (error || !user)
             return res.status(401).json({ message: "Invalid credentials" });
-        }
-        // Plain text password match (no hashing for now)
-        if (user.password_hash !== password) {
-            console.log("❌ Password mismatch");
+        // bcrypt recommended
+        const passwordOk = user.password_hash === password || bcryptjs_1.default.compareSync(password, user.password_hash);
+        if (!passwordOk)
             return res.status(401).json({ message: "Invalid credentials" });
-        }
-        // Save session
-        req.session.userId = user.id;
-        // Issue JWT cookie (so frontend can persist auth across refreshes)
-        try {
-            const token = jsonwebtoken_1.default.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
-            res.cookie(TOKEN_COOKIE_NAME, token, {
-                httpOnly: true,
-                sameSite: "lax",
-                secure: process.env.NODE_ENV === "production",
-                maxAge: TOKEN_MAX_AGE,
-                path: "/",
-            });
-        }
-        catch (jwtErr) {
-            console.error("JWT sign error:", jwtErr);
-            // continue anyway
-        }
-        console.log("✅ Login successful for user:", username);
+        const token = jsonwebtoken_1.default.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
+        res.cookie(TOKEN_COOKIE_NAME, token, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "none",
+            maxAge: TOKEN_MAX_AGE,
+            path: "/",
+        });
         return res.json({ ok: true });
     });
     app.post("/api/logout", (req, res) => {
-        // clear JWT cookie and session cookie
-        try {
-            res.clearCookie(TOKEN_COOKIE_NAME, { path: "/" });
-            res.clearCookie("connect.sid", { path: "/" });
-        }
-        catch (e) {
-            // ignore clearing errors
-        }
-        req.session.destroy(() => {
-            res.json({ ok: true });
-        });
+        res.clearCookie(TOKEN_COOKIE_NAME, { path: "/" });
+        res.json({ ok: true });
     });
-    // ----------------------------
-    // SESSION / AUTH CHECK
-    // ----------------------------
     app.get("/api/me", async (req, res) => {
+        const token = req.cookies?.[TOKEN_COOKIE_NAME];
+        if (!token)
+            return res.status(401).json({ authenticated: false });
         try {
-            // 1) check express-session
-            const sessionUserId = req.session?.userId;
-            if (sessionUserId) {
-                const { data, error } = await supabaseClient_1.supabase
-                    .from("users")
-                    .select("id, username")
-                    .eq("id", sessionUserId)
-                    .maybeSingle();
-                if (error) {
-                    console.error("GET /api/me DB error:", error);
-                    return res.status(500).json({ message: "Database error" });
-                }
-                return res.json({ authenticated: true, user: data ?? { id: sessionUserId } });
-            }
-            // 2) fallback to JWT cookie (if cookie-parser is used)
-            const cookies = req.cookies;
-            const token = cookies?.token;
-            if (!token) {
+            const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
+            const { data, error } = await supabaseClient_1.supabase
+                .from("users")
+                .select("id, username")
+                .eq("id", decoded.userId)
+                .maybeSingle();
+            if (error || !data)
                 return res.status(401).json({ authenticated: false });
-            }
-            try {
-                const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
-                const userId = decoded?.userId;
-                if (!userId)
-                    return res.status(401).json({ authenticated: false });
-                const { data, error } = await supabaseClient_1.supabase
-                    .from("users")
-                    .select("id, username")
-                    .eq("id", userId)
-                    .maybeSingle();
-                if (error) {
-                    console.error("GET /api/me DB error:", error);
-                    return res.status(500).json({ message: "Database error" });
-                }
-                // sync session for convenience
-                req.session.userId = userId;
-                return res.json({ authenticated: true, user: data ?? { id: userId } });
-            }
-            catch (e) {
-                console.warn("Invalid JWT on /api/me:", e);
-                return res.status(401).json({ authenticated: false });
-            }
+            return res.json({ authenticated: true, user: data });
         }
-        catch (err) {
-            console.error("GET /api/me error:", err);
-            return res.status(500).json({ message: "Internal server error" });
+        catch {
+            return res.status(401).json({ authenticated: false });
         }
     });
     // ----------------------------
-    // PUMPS ROUTES (unchanged)
+    // PUMPS
     // ----------------------------
     app.get("/api/pumps", async (_req, res) => {
-        const { data, error } = await supabaseClient_1.supabase
-            .from("pumps")
-            .select("*")
-            .order("id", { ascending: false });
+        const { data, error } = await supabaseClient_1.supabase.from("pumps").select("*").order("id", { ascending: false });
         if (error)
             return res.status(500).json({ message: error.message });
         return res.json(data);
     });
     app.post("/api/pumps", async (req, res) => {
         const { name, location, manager } = req.body;
-        if (!name || !location || !manager) {
+        if (!name || !location || !manager)
             return res.status(400).json({ message: "Missing fields" });
-        }
         const { data, error } = await supabaseClient_1.supabase
             .from("pumps")
             .insert([{ name, location, manager }])
@@ -151,134 +85,84 @@ function registerRoutes(app) {
             return res.status(500).json({ message: error.message });
         return res.status(201).json(data);
     });
-    app.put("/api/pumps/:id", async (req, res) => {
-        const { id } = req.params;
-        const { name, location, manager } = req.body;
-        const { data, error } = await supabaseClient_1.supabase
-            .from("pumps")
-            .update({ name, location, manager })
-            .eq("id", id)
-            .select("*")
-            .maybeSingle();
-        if (error)
-            return res.status(500).json({ message: error.message });
-        if (!data)
-            return res.status(404).json({ message: "Pump not found" });
-        return res.json(data);
-    });
-    app.delete("/api/pumps/:id", async (req, res) => {
-        const { id } = req.params;
-        const { error } = await supabaseClient_1.supabase.from("pumps").delete().eq("id", id);
-        if (error)
-            return res.status(500).json({ message: error.message });
-        return res.json({ ok: true });
-    });
     // ----------------------------
-    // ASSETS ROUTES (unchanged)
+    // CATEGORIES
     // ----------------------------
-    app.get("/api/assets", async (_req, res) => {
-        const { data, error } = await supabaseClient_1.supabase
-            .from("assets")
-            .select("*")
-            .order("id", { ascending: false });
+    app.get("/api/categories", async (_req, res) => {
+        const { data, error } = await supabaseClient_1.supabase.from("categories").select("*").order("name", { ascending: true });
         if (error)
             return res.status(500).json({ message: error.message });
         return res.json(data);
     });
-    app.get("/api/assets/pump/:pumpId", async (req, res) => {
-        try {
-            const { pumpId } = req.params;
-            console.log("Fetching assets for pumpId (raw):", pumpId);
-            const pumpIdNum = Number(pumpId);
-            const value = isNaN(pumpIdNum) ? pumpId : pumpIdNum;
-            const { data, error } = await supabaseClient_1.supabase
-                .from("assets")
-                .select("*")
-                .eq("pumpId", value)
-                .order("id", { ascending: false });
-            if (error) {
-                console.error("❌ Supabase error fetching assets for pump:", pumpId, error);
-                return res.status(500).json({ message: error.message });
-            }
-            return res.json(data || []);
-        }
-        catch (err) {
-            console.error("Unexpected error in GET /api/assets/pump/:pumpId", err);
-            return res.status(500).json({ message: err?.message || "Internal server error" });
-        }
-    });
-    app.get("/api/assets/:id", async (req, res) => {
-        const { id } = req.params;
-        const { data, error } = await supabaseClient_1.supabase
-            .from("assets")
-            .select("*")
-            .eq("id", id)
-            .maybeSingle();
-        if (error) {
-            console.log("❌ Asset fetch error:", error.message);
-            return res.status(500).json({ message: "Database error" });
-        }
-        if (!data) {
-            console.log("❌ Asset not found");
-            return res.status(404).json({ message: "Asset not found" });
-        }
-        return res.json(data);
-    });
-    app.post("/api/assets", async (req, res) => {
-        const { pumpId, serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks } = req.body;
-        if (!pumpId || !asset_name || !assetNumber) {
-            return res.status(400).json({ message: "Missing required fields" });
-        }
-        const { data, error } = await supabaseClient_1.supabase
-            .from("assets")
-            .insert([
-            {
-                pumpId: pumpId,
-                serialNumber,
-                asset_name,
-                assetNumber,
-                barcode: barcode ?? null,
-                quantity,
-                units,
-                remarks: remarks ?? null,
-            },
-        ])
-            .select("*")
-            .maybeSingle();
-        if (error) {
-            console.error("❌ Asset insert error:", error.message);
+    app.post("/api/categories", async (req, res) => {
+        const { name } = req.body;
+        if (!name)
+            return res.status(400).json({ message: "Category name required" });
+        const { data, error } = await supabaseClient_1.supabase.from("categories").insert([{ name }]).select("*").maybeSingle();
+        if (error)
             return res.status(500).json({ message: error.message });
-        }
         return res.status(201).json(data);
     });
-    app.put("/api/assets/:id", async (req, res) => {
-        const { id } = req.params;
-        const { serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks } = req.body;
+    // ----------------------------
+    // ASSETS
+    // ----------------------------
+    app.get("/api/assets", async (req, res) => {
+        try {
+            const { categoryId } = req.query;
+            const query = supabaseClient_1.supabase.from("assets").select("*").order("id", { ascending: false });
+            const { data: assets, error } = await query;
+            if (error)
+                return res.status(500).json({ message: error.message });
+            let list = assets || [];
+            if (categoryId)
+                list = list.filter((a) => a.category_id === categoryId);
+            const { data: cats } = await supabaseClient_1.supabase.from("categories").select("id, name");
+            const cmap = new Map((cats || []).map((c) => [c.id, c.name]));
+            const withNames = list.map((a) => ({
+                ...a,
+                categoryName: a.category_id ? cmap.get(a.category_id) : null,
+            }));
+            return res.json(withNames);
+        }
+        catch (e) {
+            return res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    app.post("/api/assets", async (req, res) => {
+        const { pumpId, serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks, category_id } = req.body;
+        if (!pumpId || !asset_name || !assetNumber)
+            return res.status(400).json({ message: "Missing required fields" });
         const { data, error } = await supabaseClient_1.supabase
             .from("assets")
-            .update({
-            serialNumber,
-            asset_name,
-            assetNumber,
-            barcode: barcode ?? null,
-            quantity,
-            units,
-            remarks: remarks ?? null,
-        })
-            .eq("id", id)
+            .insert([{ pumpId, serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks, category_id }])
             .select("*")
             .maybeSingle();
         if (error)
             return res.status(500).json({ message: error.message });
-        if (!data)
-            return res.status(404).json({ message: "Asset not found" });
-        return res.json(data);
+        return res.status(201).json(data);
     });
-    app.delete("/api/assets/:id", async (req, res) => {
-        const { id } = req.params;
-        const { error } = await supabaseClient_1.supabase.from("assets").delete().eq("id", id);
+    // ----------------------------
+    // REPORT ROUTES
+    // ----------------------------
+    app.get("/api/reports/assets-by-category", async (_req, res) => {
+        const { data, error } = await supabaseClient_1.supabase
+            .from("assets")
+            .select("id, asset_name, category_id, pumps(name)")
+            .order("category_id", { ascending: true });
         if (error)
             return res.status(500).json({ message: error.message });
-        return res.json({ ok: true });
+        return res.json(data);
+    });
+    app.get("/api/reports/all-assets", async (_req, res) => {
+        const { data, error } = await supabaseClient_1.supabase.from("assets").select("*").order("id", { ascending: false });
+        if (error)
+            return res.status(500).json({ message: error.message });
+        return res.json(data);
+    });
+    app.get("/api/reports/all-stations", async (_req, res) => {
+        const { data, error } = await supabaseClient_1.supabase.from("pumps").select("*").order("id", { ascending: false });
+        if (error)
+            return res.status(500).json({ message: error.message });
+        return res.json(data);
     });
 }
