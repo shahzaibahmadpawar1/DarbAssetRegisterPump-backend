@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-// server.ts
+// server/index.ts
 const express_1 = __importDefault(require("express"));
 const express_session_1 = __importDefault(require("express-session"));
 const cors_1 = __importDefault(require("cors"));
@@ -12,46 +12,66 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const routes_1 = require("./routes");
 require("dotenv/config");
 const app = (0, express_1.default)();
-// ✅ CORS config
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+// ===============================
+// ✅ Config
+// ===============================
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://azharalibuttar.com";
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
+const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
+// ===============================
+// ✅ CORS
+// ===============================
 app.use((0, cors_1.default)({
-    origin: FRONTEND_ORIGIN,
+    origin: (origin, cb) => {
+        const allowed = [
+            "https://azharalibuttar.com",
+            "https://www.azharalibuttar.com",
+        ];
+        if (!origin || allowed.includes(origin))
+            cb(null, true);
+        else
+            cb(new Error("CORS blocked: " + origin));
+    },
+    credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
 }));
+app.options("*", (0, cors_1.default)());
+// ===============================
+// ✅ Middleware
+// ===============================
 app.use(express_1.default.json());
 app.use((0, cookie_parser_1.default)());
-// ✅ Middleware to attach decoded JWT (optional)
+// Attach user from JWT cookie
 app.use((req, _res, next) => {
     const token = req.cookies?.token;
     if (token) {
         try {
-            const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
-            req.user = decoded;
+            req.user = jsonwebtoken_1.default.verify(token, JWT_SECRET);
         }
         catch {
-            // ignore invalid token
+            // ignore bad token
         }
     }
     next();
 });
-// ✅ Express session config
+// ✅ Session
 app.use((0, express_session_1.default)({
-    secret: process.env.SESSION_SECRET || "replace-me",
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
-        sameSite: "none",
+        httpOnly: true,
         secure: true,
+        sameSite: "none",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
     },
 }));
-// ✅ Register all routes
+// ✅ Routes
 (0, routes_1.registerRoutes)(app);
-// ✅ Start server
-const PORT = Number(process.env.PORT || 3000);
-app.listen(PORT, () => {
-    console.log(`✅ Server running on http://localhost:${PORT}`);
-    console.log(`🌐 CORS Origin: ${FRONTEND_ORIGIN}`);
+// ✅ Root check
+app.get("/", (_req, res) => {
+    res.status(200).send("✅ Backend running on Vercel and connected to frontend.");
 });
+// ⚠️ DO NOT CALL app.listen() ON VERCEL
+exports.default = app;
