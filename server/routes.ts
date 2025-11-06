@@ -137,6 +137,24 @@ export function registerRoutes(app: Express) {
     }
   });
 
+// Create asset without linking to pump
+app.post("/api/assets/add", async (req, res) => {
+  const { serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks, category_id } = req.body;
+  if (!asset_name || !assetNumber) {
+    return res.status(400).json({ message: "Missing required fields" });
+  }
+
+  const { data, error } = await supabase
+    .from("assets")
+    .insert([{ serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks, category_id: category_id || null }])
+    .select("*")
+    .maybeSingle();
+
+  if (error) return res.status(500).json({ message: error.message });
+  return res.status(201).json(data);
+});
+
+
   app.get("/api/assets", async (req, res) => {
     try {
       const { categoryId } = req.query;
