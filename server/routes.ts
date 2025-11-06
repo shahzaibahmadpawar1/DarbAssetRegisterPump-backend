@@ -138,7 +138,7 @@ export function registerRoutes(app: Express) {
   });
 
 // Create asset without linking to pump
-app.post("/api/assets/add", async (req, res) => {
+app.post("/api/assets", async (req, res) => {
   const { serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks, category_id } = req.body;
   if (!asset_name || !assetNumber) {
     return res.status(400).json({ message: "Missing required fields" });
