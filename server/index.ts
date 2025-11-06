@@ -17,24 +17,31 @@ const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
 const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 
 // ===============================
-// ✅ CORS
+// ✅ CORS CONFIGURATION (final)
 // ===============================
+const allowedOrigins = [
+  "https://azharalibuttar.com",
+  "https://www.azharalibuttar.com",
+  "http://localhost:5173", // optional for local testing
+];
+
 app.use(
   cors({
-    origin: (origin, cb) => {
-      const allowed = [
-        "https://azharalibuttar.com",
-        "https://www.azharalibuttar.com",
-      ];
-      if (!origin || allowed.includes(origin)) cb(null, true);
-      else cb(new Error("CORS blocked: " + origin));
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("CORS blocked from origin: " + origin));
     },
-    credentials: true,
+    credentials: true, // ✅ required for cookies
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
-app.options("*", cors());
+
+// ✅ Explicit preflight handling
+app.options("*", cors({ origin: allowedOrigins, credentials: true }));
+
 
 // ===============================
 // ✅ Middleware
