@@ -27,14 +27,14 @@ export function registerRoutes(app: Express) {
 
     if (error || !user) return res.status(401).json({ message: "Invalid credentials" });
 
-    const passwordOk =
-      user.password_hash === password || bcrypt.compareSync(password, user.password_hash);
+    // ✅ Strict bcrypt check only (no plaintext fallback)
+    const passwordOk = bcrypt.compareSync(password, user.password_hash);
     if (!passwordOk) return res.status(401).json({ message: "Invalid credentials" });
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
     res.cookie(TOKEN_COOKIE_NAME, token, {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === "production", // ✅ local dev friendly
       sameSite: "none",
       maxAge: TOKEN_MAX_AGE,
       path: "/",
@@ -93,6 +93,30 @@ export function registerRoutes(app: Express) {
     return res.status(201).json(data);
   });
 
+  // Update pump
+  app.put("/api/pumps/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const payload = req.body;
+    const { data, error } = await supabase
+      .from("pumps")
+      .update(payload)
+      .eq("id", id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) return res.status(500).json({ message: error.message });
+    if (!data) return res.status(404).json({ message: "Pump not found" });
+    res.json(data);
+  });
+
+  // Delete pump
+  app.delete("/api/pumps/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const { error } = await supabase.from("pumps").delete().eq("id", id);
+    if (error) return res.status(500).json({ message: error.message });
+    res.status(204).send();
+  });
+
   // ----------------------------
   // CATEGORIES
   // ----------------------------
@@ -121,15 +145,18 @@ export function registerRoutes(app: Express) {
   // ----------------------------
   // ASSETS
   // ----------------------------
-  // ✅ NEW route added here
+
+  // Assets by pump
   app.get("/api/assets/pump/:pumpId", async (req: Request, res: Response) => {
     try {
-      const { pumpId } = req.params;
+      const pumpId = Number(req.params.pumpId);
+      if (Number.isNaN(pumpId)) {
+        return res.status(400).json({ message: "Invalid pumpId" });
+      }
       const { data, error } = await supabase
         .from("assets")
         .select("*")
-        .eq("pumpId", pumpId)
-        .order("id", { ascending: false });
+        .eq("pump_id", pumpId);
       if (error) return res.status(500).json({ message: error.message });
       return res.json(data);
     } catch (e: any) {
@@ -137,32 +164,20 @@ export function registerRoutes(app: Express) {
     }
   });
 
-// Create asset without linking to pump
-app.post("/api/assets", async (req, res) => {
-  const { serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks, category_id } = req.body;
-  if (!asset_name || !assetNumber) {
-    return res.status(400).json({ message: "Missing required fields" });
-  }
-
-  const { data, error } = await supabase
-    .from("assets")
-    .insert([{ serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks, category_id: category_id || null }])
-    .select("*")
-    .maybeSingle();
-
-  if (error) return res.status(500).json({ message: error.message });
-  return res.status(201).json(data);
-});
-
-
+  // 🔁 LIST (with optional category filter; adds categoryName)
   app.get("/api/assets", async (req, res) => {
     try {
       const { categoryId } = req.query;
       const query = supabase.from("assets").select("*").order("id", { ascending: false });
       const { data: assets, error } = await query;
       if (error) return res.status(500).json({ message: error.message });
+
       let list = assets || [];
-      if (categoryId) list = list.filter((a: any) => a.category_id === categoryId);
+      if (categoryId != null) {
+        list = list.filter(
+          (a: any) => Number(a.category_id) === Number(categoryId as string)
+        );
+      }
 
       const { data: cats } = await supabase.from("categories").select("id, name");
       const cmap = new Map((cats || []).map((c: any) => [c.id, c.name]));
@@ -177,9 +192,10 @@ app.post("/api/assets", async (req, res) => {
     }
   });
 
+  // ✅ SINGLE merged CREATE (pump optional; maps pumpId -> pump_id)
   app.post("/api/assets", async (req, res) => {
     const {
-      pumpId,
+      pumpId, // optional from frontend
       serialNumber,
       asset_name,
       assetNumber,
@@ -187,19 +203,57 @@ app.post("/api/assets", async (req, res) => {
       quantity,
       units,
       remarks,
-      category_id,
+      category_id, // optional
     } = req.body;
-    if (!pumpId || !asset_name || !assetNumber)
+
+    if (!asset_name || !assetNumber) {
       return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const insertRow: any = {
+      serialNumber: serialNumber ?? null,
+      asset_name,
+      assetNumber,
+      barcode: barcode ?? null,
+      quantity: quantity ?? null,
+      units: units ?? null,
+      remarks: remarks ?? null,
+      category_id: category_id ?? null,
+      pump_id: pumpId != null ? Number(pumpId) : null, // map to DB column
+    };
 
     const { data, error } = await supabase
       .from("assets")
-      .insert([{ pumpId, serialNumber, asset_name, assetNumber, barcode, quantity, units, remarks, category_id }])
+      .insert([insertRow])
       .select("*")
       .maybeSingle();
 
     if (error) return res.status(500).json({ message: error.message });
     return res.status(201).json(data);
+  });
+
+  // Update asset
+  app.put("/api/assets/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const payload = req.body;
+    const { data, error } = await supabase
+      .from("assets")
+      .update(payload)
+      .eq("id", id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) return res.status(500).json({ message: error.message });
+    if (!data) return res.status(404).json({ message: "Asset not found" });
+    res.json(data);
+  });
+
+  // Delete asset
+  app.delete("/api/assets/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    const { error } = await supabase.from("assets").delete().eq("id", id);
+    if (error) return res.status(500).json({ message: error.message });
+    res.status(204).send();
   });
 
   // ----------------------------
