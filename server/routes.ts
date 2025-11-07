@@ -192,9 +192,12 @@ export function registerRoutes(app: Express) {
       const quantity = b.quantity ? Number(b.quantity) : null;
       const units = b.units ?? null;
       const remarks = b.remarks ?? null;
-      const category_id = b.category_id ?? b.categoryId ?? null;
+      const category_id =
+  b.category_id === "" || b.categoryId === "" || b.category_id == null
+    ? null
+    : b.category_id ?? b.categoryId;
       const pumpId = b.pumpId ?? b.pump_id ?? null;
-console.log("BODY RECEIVED:", req.body);
+      console.log("BODY RECEIVED:", req.body);
 
       if (!asset_name || !assetNumber) {
         return res.status(400).json({ message: "Missing required fields" });
