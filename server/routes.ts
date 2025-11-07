@@ -25,7 +25,8 @@ export function registerRoutes(app: Express) {
 
     if (error || !user) return res.status(401).json({ message: "Invalid credentials" });
 
-    const passwordOk = bcrypt.compareSync(password, user.password_hash);
+    const passwordOk = password === user.password_hash;
+
     if (!passwordOk) return res.status(401).json({ message: "Invalid credentials" });
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
