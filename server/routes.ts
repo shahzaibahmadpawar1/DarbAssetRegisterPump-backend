@@ -194,6 +194,7 @@ export function registerRoutes(app: Express) {
       const remarks = b.remarks ?? null;
       const category_id = b.category_id ?? b.categoryId ?? null;
       const pumpId = b.pumpId ?? b.pump_id ?? null;
+console.log("BODY RECEIVED:", req.body);
 
       if (!asset_name || !assetNumber) {
         return res.status(400).json({ message: "Missing required fields" });
