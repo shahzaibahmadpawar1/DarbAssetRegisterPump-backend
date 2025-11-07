@@ -14,10 +14,8 @@ export function registerRoutes(app: Express) {
   // ----------------------------
   app.post("/api/login", async (req: Request, res: Response) => {
     const { username, password } = req.body;
-
-    if (!username || !password) {
+    if (!username || !password)
       return res.status(400).json({ message: "Missing credentials" });
-    }
 
     const { data: user, error } = await supabase
       .from("users")
@@ -27,14 +25,13 @@ export function registerRoutes(app: Express) {
 
     if (error || !user) return res.status(401).json({ message: "Invalid credentials" });
 
-    // strict bcrypt only
     const passwordOk = bcrypt.compareSync(password, user.password_hash);
     if (!passwordOk) return res.status(401).json({ message: "Invalid credentials" });
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
     res.cookie(TOKEN_COOKIE_NAME, token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // local dev friendly
+      secure: process.env.NODE_ENV === "production",
       sameSite: "none",
       maxAge: TOKEN_MAX_AGE,
       path: "/",
@@ -71,10 +68,7 @@ export function registerRoutes(app: Express) {
   // PUMPS
   // ----------------------------
   app.get("/api/pumps", async (_req, res) => {
-    const { data, error } = await supabase
-      .from("pumps")
-      .select("*")
-      .order("id", { ascending: false });
+    const { data, error } = await supabase.from("pumps").select("*").order("id", { ascending: false });
     if (error) return res.status(500).json({ message: error.message });
     return res.json(data);
   });
@@ -119,10 +113,7 @@ export function registerRoutes(app: Express) {
   // CATEGORIES
   // ----------------------------
   app.get("/api/categories", async (_req, res) => {
-    const { data, error } = await supabase
-      .from("categories")
-      .select("*")
-      .order("name", { ascending: true });
+    const { data, error } = await supabase.from("categories").select("*").order("name", { ascending: true });
     if (error) return res.status(500).json({ message: error.message });
     return res.json(data);
   });
@@ -144,17 +135,18 @@ export function registerRoutes(app: Express) {
   // ASSETS
   // ----------------------------
 
-  // Assets by pump
+  // ✅ Assets by pump (correct field: pumpId)
   app.get("/api/assets/pump/:pumpId", async (req: Request, res: Response) => {
     try {
       const pumpId = Number(req.params.pumpId);
-      if (Number.isNaN(pumpId)) {
+      if (Number.isNaN(pumpId))
         return res.status(400).json({ message: "Invalid pumpId" });
-      }
+
       const { data, error } = await supabase
         .from("assets")
         .select("*")
-        .eq("pump_id", pumpId);
+        .eq("pumpId", pumpId);
+
       if (error) return res.status(500).json({ message: error.message });
       return res.json(data);
     } catch (e: any) {
@@ -162,7 +154,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // LIST (with optional category filter; adds categoryName)
+  // ✅ List assets (optional category filter)
   app.get("/api/assets", async (req, res) => {
     try {
       const { categoryId } = req.query;
@@ -172,9 +164,7 @@ export function registerRoutes(app: Express) {
 
       let list = assets || [];
       if (categoryId != null) {
-        list = list.filter(
-          (a: any) => Number(a.category_id) === Number(categoryId as string)
-        );
+        list = list.filter((a: any) => String(a.category_id) === String(categoryId));
       }
 
       const { data: cats } = await supabase.from("categories").select("id, name");
@@ -190,34 +180,22 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // CREATE (accepts camelCase & snake_case; maps pumpId -> pump_id; coerces numbers)
+  // ✅ Create asset (fix: pumpId field)
   app.post("/api/assets", async (req, res) => {
     try {
       const b = req.body || {};
-
-      // accept both camelCase & snake_case
       const asset_name = b.asset_name ?? b.assetName ?? null;
       const assetNumber = b.assetNumber ?? b.asset_number ?? null;
       const serialNumber = b.serialNumber ?? b.serial_number ?? null;
       const barcode = b.barcode ?? null;
-      const quantity =
-        b.quantity == null || b.quantity === "" ? null : Number(b.quantity);
+      const quantity = b.quantity ? Number(b.quantity) : null;
       const units = b.units ?? null;
       const remarks = b.remarks ?? null;
+      const category_id = b.category_id ?? b.categoryId ?? null;
+      const pumpId = b.pumpId ?? b.pump_id ?? null;
 
-      const rawCategory = b.category_id ?? b.categoryId ?? null;
-      const rawPump = b.pump_id ?? b.pumpId ?? null;
-
-      const category_id =
-        rawCategory == null || rawCategory === "" ? null : Number(rawCategory);
-      const pump_id =
-        rawPump == null || rawPump === "" ? null : Number(rawPump);
-
-      const missing: string[] = [];
-      if (!asset_name) missing.push("asset_name (or assetName)");
-      if (!assetNumber) missing.push("assetNumber (or asset_number)");
-      if (missing.length) {
-        return res.status(400).json({ message: "Missing required fields", missing });
+      if (!asset_name || !assetNumber) {
+        return res.status(400).json({ message: "Missing required fields" });
       }
 
       const insertRow: any = {
@@ -228,8 +206,8 @@ export function registerRoutes(app: Express) {
         quantity,
         units,
         remarks,
-        category_id: category_id !== null && !Number.isNaN(category_id) ? category_id : null,
-        pump_id: pump_id !== null && !Number.isNaN(pump_id) ? pump_id : null,
+        category_id: category_id || null,
+        pumpId: pumpId ? Number(pumpId) : null,
       };
 
       const { data, error } = await supabase
@@ -238,23 +216,14 @@ export function registerRoutes(app: Express) {
         .select("*")
         .maybeSingle();
 
-      if (error) {
-        return res.status(500).json({
-          message: error.message,
-          hint:
-            "Check Supabase column names & types (asset_name, assetNumber, serialNumber, barcode, quantity, units, remarks, category_id, pump_id).",
-        });
-      }
-
+      if (error) return res.status(500).json({ message: error.message });
       return res.status(201).json(data);
     } catch (e: any) {
-      return res
-        .status(500)
-        .json({ message: e?.message || "Internal error creating asset" });
+      return res.status(500).json({ message: e?.message || "Internal error creating asset" });
     }
   });
 
-  // UPDATE (tolerant to camelCase & snake_case; coerces numbers)
+  // ✅ Update asset (fix: pumpId field)
   app.put("/api/assets/:id", async (req, res) => {
     try {
       const id = Number(req.params.id);
@@ -275,8 +244,7 @@ export function registerRoutes(app: Express) {
       if ("barcode" in b) payload.barcode = b.barcode ?? null;
 
       if ("quantity" in b)
-        payload.quantity =
-          b.quantity == null || b.quantity === "" ? null : Number(b.quantity);
+        payload.quantity = b.quantity == null ? null : Number(b.quantity);
 
       if ("units" in b) payload.units = b.units ?? null;
 
@@ -284,14 +252,12 @@ export function registerRoutes(app: Express) {
 
       if ("categoryId" in b || "category_id" in b) {
         const cat = b.category_id ?? b.categoryId;
-        payload.category_id =
-          cat == null || cat === "" ? null : Number(cat);
+        payload.category_id = cat || null;
       }
 
       if ("pumpId" in b || "pump_id" in b) {
-        const pid = b.pump_id ?? b.pumpId;
-        payload.pump_id =
-          pid == null || pid === "" ? null : Number(pid);
+        const pid = b.pumpId ?? b.pump_id;
+        payload.pumpId = pid ? Number(pid) : null;
       }
 
       const { data, error } = await supabase
@@ -330,19 +296,13 @@ export function registerRoutes(app: Express) {
   });
 
   app.get("/api/reports/all-assets", async (_req, res) => {
-    const { data, error } = await supabase
-      .from("assets")
-      .select("*")
-      .order("id", { ascending: false });
+    const { data, error } = await supabase.from("assets").select("*").order("id", { ascending: false });
     if (error) return res.status(500).json({ message: error.message });
     return res.json(data);
   });
 
   app.get("/api/reports/all-stations", async (_req, res) => {
-    const { data, error } = await supabase
-      .from("pumps")
-      .select("*")
-      .order("id", { ascending: false });
+    const { data, error } = await supabase.from("pumps").select("*").order("id", { ascending: false });
     if (error) return res.status(500).json({ message: error.message });
     return res.json(data);
   });
