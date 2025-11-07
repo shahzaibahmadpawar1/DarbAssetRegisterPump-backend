@@ -214,21 +214,20 @@ export function registerRoutes(app: Express) {
         category_id: category_id || null,
         pumpId: pumpId ? Number(pumpId) : null,
       };
-      // 👇👇👇 ADD THESE TWO LINES HERE
-      console.log("INSERT ROW:", insertRow);
-      const { data, error } = await supabase
-        .from("assets")
-        .insert([insertRow])
-        .select("*")
-        .maybeSingle();
-      
-         // 👇👇👇 ADD THIS BLOCK RIGHT AFTER THE QUERY
-    if (error) {
-      console.error("SUPABASE INSERT ERROR:", error);
-      return res.status(500).json(error);
-    }
+      console.log("INSERT ROW:", JSON.stringify(insertRow));
 
-    return res.status(201).json(data);
+const { data, error } = await supabase
+  .from("assets")
+  .insert([insertRow])
+  .select("*")
+  .maybeSingle();
+
+if (error) {
+  console.error("SUPABASE INSERT ERROR:", JSON.stringify(error, null, 2));
+  return res.status(400).json({ message: "DB insert error", error });
+}
+
+return res.status(201).json(data);
   } catch (e: any) {
     return res.status(500).json({ message: e?.message || "Internal error creating asset" });
   }
