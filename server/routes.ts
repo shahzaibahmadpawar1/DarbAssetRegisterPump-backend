@@ -193,9 +193,9 @@ export function registerRoutes(app: Express) {
       const units = b.units ?? null;
       const remarks = b.remarks ?? null;
       const category_id =
-  b.category_id === "" || b.categoryId === "" || b.category_id == null
-    ? null
-    : b.category_id ?? b.categoryId;
+        b.category_id === "" || b.categoryId === "" || b.category_id == null
+          ? null
+          : b.category_id ?? b.categoryId;
       const pumpId = b.pumpId ?? b.pump_id ?? null;
       console.log("BODY RECEIVED:", req.body);
 
@@ -214,19 +214,26 @@ export function registerRoutes(app: Express) {
         category_id: category_id || null,
         pumpId: pumpId ? Number(pumpId) : null,
       };
-
+      // 👇👇👇 ADD THESE TWO LINES HERE
+      console.log("INSERT ROW:", insertRow);
       const { data, error } = await supabase
         .from("assets")
         .insert([insertRow])
         .select("*")
         .maybeSingle();
-
-      if (error) return res.status(500).json({ message: error.message });
-      return res.status(201).json(data);
-    } catch (e: any) {
-      return res.status(500).json({ message: e?.message || "Internal error creating asset" });
+      
+         // 👇👇👇 ADD THIS BLOCK RIGHT AFTER THE QUERY
+    if (error) {
+      console.error("SUPABASE INSERT ERROR:", error);
+      return res.status(500).json(error);
     }
-  });
+
+    return res.status(201).json(data);
+  } catch (e: any) {
+    return res.status(500).json({ message: e?.message || "Internal error creating asset" });
+  }
+});
+
 
   // ✅ Update asset (fix: pumpId field)
   app.put("/api/assets/:id", async (req, res) => {
