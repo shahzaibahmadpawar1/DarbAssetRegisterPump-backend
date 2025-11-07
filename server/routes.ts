@@ -27,14 +27,14 @@ export function registerRoutes(app: Express) {
 
     if (error || !user) return res.status(401).json({ message: "Invalid credentials" });
 
-    // ✅ Strict bcrypt check only (no plaintext fallback)
+    // strict bcrypt only
     const passwordOk = bcrypt.compareSync(password, user.password_hash);
     if (!passwordOk) return res.status(401).json({ message: "Invalid credentials" });
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
     res.cookie(TOKEN_COOKIE_NAME, token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // ✅ local dev friendly
+      secure: process.env.NODE_ENV === "production", // local dev friendly
       sameSite: "none",
       maxAge: TOKEN_MAX_AGE,
       path: "/",
@@ -93,7 +93,6 @@ export function registerRoutes(app: Express) {
     return res.status(201).json(data);
   });
 
-  // Update pump
   app.put("/api/pumps/:id", async (req, res) => {
     const id = Number(req.params.id);
     const payload = req.body;
@@ -109,7 +108,6 @@ export function registerRoutes(app: Express) {
     res.json(data);
   });
 
-  // Delete pump
   app.delete("/api/pumps/:id", async (req, res) => {
     const id = Number(req.params.id);
     const { error } = await supabase.from("pumps").delete().eq("id", id);
@@ -164,7 +162,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // 🔁 LIST (with optional category filter; adds categoryName)
+  // LIST (with optional category filter; adds categoryName)
   app.get("/api/assets", async (req, res) => {
     try {
       const { categoryId } = req.query;
@@ -192,63 +190,126 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // ✅ SINGLE merged CREATE (pump optional; maps pumpId -> pump_id)
+  // CREATE (accepts camelCase & snake_case; maps pumpId -> pump_id; coerces numbers)
   app.post("/api/assets", async (req, res) => {
-    const {
-      pumpId, // optional from frontend
-      serialNumber,
-      asset_name,
-      assetNumber,
-      barcode,
-      quantity,
-      units,
-      remarks,
-      category_id, // optional
-    } = req.body;
+    try {
+      const b = req.body || {};
 
-    if (!asset_name || !assetNumber) {
-      return res.status(400).json({ message: "Missing required fields" });
+      // accept both camelCase & snake_case
+      const asset_name = b.asset_name ?? b.assetName ?? null;
+      const assetNumber = b.assetNumber ?? b.asset_number ?? null;
+      const serialNumber = b.serialNumber ?? b.serial_number ?? null;
+      const barcode = b.barcode ?? null;
+      const quantity =
+        b.quantity == null || b.quantity === "" ? null : Number(b.quantity);
+      const units = b.units ?? null;
+      const remarks = b.remarks ?? null;
+
+      const rawCategory = b.category_id ?? b.categoryId ?? null;
+      const rawPump = b.pump_id ?? b.pumpId ?? null;
+
+      const category_id =
+        rawCategory == null || rawCategory === "" ? null : Number(rawCategory);
+      const pump_id =
+        rawPump == null || rawPump === "" ? null : Number(rawPump);
+
+      const missing: string[] = [];
+      if (!asset_name) missing.push("asset_name (or assetName)");
+      if (!assetNumber) missing.push("assetNumber (or asset_number)");
+      if (missing.length) {
+        return res.status(400).json({ message: "Missing required fields", missing });
+      }
+
+      const insertRow: any = {
+        asset_name,
+        assetNumber,
+        serialNumber,
+        barcode,
+        quantity,
+        units,
+        remarks,
+        category_id: category_id !== null && !Number.isNaN(category_id) ? category_id : null,
+        pump_id: pump_id !== null && !Number.isNaN(pump_id) ? pump_id : null,
+      };
+
+      const { data, error } = await supabase
+        .from("assets")
+        .insert([insertRow])
+        .select("*")
+        .maybeSingle();
+
+      if (error) {
+        return res.status(500).json({
+          message: error.message,
+          hint:
+            "Check Supabase column names & types (asset_name, assetNumber, serialNumber, barcode, quantity, units, remarks, category_id, pump_id).",
+        });
+      }
+
+      return res.status(201).json(data);
+    } catch (e: any) {
+      return res
+        .status(500)
+        .json({ message: e?.message || "Internal error creating asset" });
     }
-
-    const insertRow: any = {
-      serialNumber: serialNumber ?? null,
-      asset_name,
-      assetNumber,
-      barcode: barcode ?? null,
-      quantity: quantity ?? null,
-      units: units ?? null,
-      remarks: remarks ?? null,
-      category_id: category_id ?? null,
-      pump_id: pumpId != null ? Number(pumpId) : null, // map to DB column
-    };
-
-    const { data, error } = await supabase
-      .from("assets")
-      .insert([insertRow])
-      .select("*")
-      .maybeSingle();
-
-    if (error) return res.status(500).json({ message: error.message });
-    return res.status(201).json(data);
   });
 
-  // Update asset
+  // UPDATE (tolerant to camelCase & snake_case; coerces numbers)
   app.put("/api/assets/:id", async (req, res) => {
-    const id = Number(req.params.id);
-    const payload = req.body;
-    const { data, error } = await supabase
-      .from("assets")
-      .update(payload)
-      .eq("id", id)
-      .select("*")
-      .maybeSingle();
+    try {
+      const id = Number(req.params.id);
+      if (Number.isNaN(id)) return res.status(400).json({ message: "Invalid id" });
 
-    if (error) return res.status(500).json({ message: error.message });
-    if (!data) return res.status(404).json({ message: "Asset not found" });
-    res.json(data);
+      const b = req.body || {};
+      const payload: any = {};
+
+      if ("assetName" in b || "asset_name" in b)
+        payload.asset_name = b.asset_name ?? b.assetName;
+
+      if ("assetNumber" in b || "asset_number" in b)
+        payload.assetNumber = b.assetNumber ?? b.asset_number;
+
+      if ("serialNumber" in b || "serial_number" in b)
+        payload.serialNumber = b.serialNumber ?? b.serial_number;
+
+      if ("barcode" in b) payload.barcode = b.barcode ?? null;
+
+      if ("quantity" in b)
+        payload.quantity =
+          b.quantity == null || b.quantity === "" ? null : Number(b.quantity);
+
+      if ("units" in b) payload.units = b.units ?? null;
+
+      if ("remarks" in b) payload.remarks = b.remarks ?? null;
+
+      if ("categoryId" in b || "category_id" in b) {
+        const cat = b.category_id ?? b.categoryId;
+        payload.category_id =
+          cat == null || cat === "" ? null : Number(cat);
+      }
+
+      if ("pumpId" in b || "pump_id" in b) {
+        const pid = b.pump_id ?? b.pumpId;
+        payload.pump_id =
+          pid == null || pid === "" ? null : Number(pid);
+      }
+
+      const { data, error } = await supabase
+        .from("assets")
+        .update(payload)
+        .eq("id", id)
+        .select("*")
+        .maybeSingle();
+
+      if (error) return res.status(500).json({ message: error.message });
+      if (!data) return res.status(404).json({ message: "Asset not found" });
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error updating asset" });
+    }
   });
 
-  // Delete asset
+  // DELETE
   app.delete("/api/assets/:id", async (req, res) => {
     const id = Number(req.params.id);
     const { error } = await supabase.from("assets").delete().eq("id", id);
