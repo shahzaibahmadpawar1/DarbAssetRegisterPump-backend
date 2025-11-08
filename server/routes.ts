@@ -168,34 +168,33 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // ✅ Create asset - compatible with camelCase + snake_case
   app.post("/api/assets", async (req, res) => {
     try {
       const b = req.body || {};
 
-      // accept both camelCase and snake_case
-      const asset_name = b.asset_name ?? b.assetName ?? null;
-      const assetNumber = b.assetNumber ?? b.asset_number ?? null;
-      const serial_number = b.serial_number ?? b.serialNumber ?? null;
+      // ✅ Force immediate log flush for Vercel
+      console.log("🟢 DEBUG CREATE BODY:", JSON.stringify(b, null, 2));
+      process.stdout.write("🟢 DEBUG CREATE BODY flushed\n");
+
+      const asset_name = b.asset_name ?? b.assetName ?? b.asset ?? null;
+      const assetNumber = b.assetNumber ?? b.asset_number ?? b.assetNo ?? null;
+      const serial_number = b.serial_number ?? b.serialNumber ?? b.serial ?? null;
       const barcode = b.barcode ?? null;
       const quantity = b.quantity ? Number(b.quantity) : null;
       const units = b.units ?? null;
       const remarks = b.remarks ?? null;
-      const category_id =
-        b.category_id ?? b.categoryId ?? null;
-      const pump_id =
-        b.pump_id ?? b.pumpId ?? null;
+      const category_id = b.category_id ?? b.categoryId ?? null;
+      const pump_id = b.pump_id ?? b.pumpId ?? null;
 
-      console.log("🟢 DEBUG CREATE BODY:", JSON.stringify(req.body, null, 2));
-      console.log("Parsed fields:", {
+      console.log("🟢 Parsed fields:", {
         asset_name,
         assetNumber,
         serial_number,
         pump_id,
         category_id,
       });
+      process.stdout.write("🟢 Parsed fields flushed\n");
 
-      // 🧩 validate
       if (!asset_name || !assetNumber || !serial_number) {
         return res.status(400).json({ message: "Missing required fields" });
       }
@@ -231,6 +230,7 @@ export function registerRoutes(app: Express) {
         .json({ message: e?.message || "Internal server error" });
     }
   });
+
 
 
   // update asset (incl. reassign pump/category)
