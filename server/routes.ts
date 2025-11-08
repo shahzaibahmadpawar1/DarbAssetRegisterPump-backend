@@ -168,48 +168,70 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // create asset (pump_id optional)
+  // ✅ Create asset - compatible with camelCase + snake_case
   app.post("/api/assets", async (req, res) => {
     try {
       const b = req.body || {};
+
+      // accept both camelCase and snake_case
       const asset_name = b.asset_name ?? b.assetName ?? null;
       const assetNumber = b.assetNumber ?? b.asset_number ?? null;
       const serial_number = b.serial_number ?? b.serialNumber ?? null;
       const barcode = b.barcode ?? null;
-      const quantity = b.quantity == null ? null : Number(b.quantity);
+      const quantity = b.quantity ? Number(b.quantity) : null;
       const units = b.units ?? null;
       const remarks = b.remarks ?? null;
-      const category_id = b.category_id || b.categoryId || null;
-      const pump_id = b.pump_id == null ? null : Number(b.pump_id);
+      const category_id =
+        b.category_id ?? b.categoryId ?? null;
+      const pump_id =
+        b.pump_id ?? b.pumpId ?? null;
 
-      if (!asset_name || !assetNumber || !serial_number || !units) {
-        return res.status(400).json({ message: "Missing required fields" });
-      }
-
-      const insertRow: any = {
+      console.log("Incoming body:", b);
+      console.log("Parsed fields:", {
         asset_name,
         assetNumber,
         serial_number,
-        barcode,
-        quantity,
-        units,
-        remarks,
-        category_id,
         pump_id,
-      };
+        category_id,
+      });
+
+      // 🧩 validate
+      if (!asset_name || !assetNumber || !serial_number) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
 
       const { data, error } = await supabase
         .from("assets")
-        .insert([insertRow])
+        .insert([
+          {
+            asset_name,
+            assetNumber,
+            serial_number,
+            barcode,
+            quantity,
+            units,
+            remarks,
+            category_id,
+            pump_id,
+          },
+        ])
         .select("*")
         .maybeSingle();
 
-      if (error) return res.status(400).json({ message: "DB insert error", error });
+      if (error) {
+        console.error("Supabase insert error:", error);
+        return res.status(400).json({ message: "DB insert error", error });
+      }
+
       return res.status(201).json(data);
     } catch (e: any) {
-      return res.status(500).json({ message: e?.message || "Internal error creating asset" });
+      console.error("Unexpected error:", e);
+      return res
+        .status(500)
+        .json({ message: e?.message || "Internal server error" });
     }
   });
+
 
   // update asset (incl. reassign pump/category)
   app.put("/api/assets/:id", async (req, res) => {
