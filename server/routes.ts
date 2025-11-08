@@ -186,7 +186,7 @@ export function registerRoutes(app: Express) {
       const pump_id =
         b.pump_id ?? b.pumpId ?? null;
 
-      console.log("Incoming body:", b);
+      console.log("🟢 DEBUG CREATE BODY:", JSON.stringify(req.body, null, 2));
       console.log("Parsed fields:", {
         asset_name,
         assetNumber,
