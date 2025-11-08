@@ -136,7 +136,7 @@ export function registerRoutes(app: Express) {
   // ASSETS
   // ----------------------------
 
-  // ✅ Assets by pump (correct field: pumpId)
+  // ✅ Assets by pump (correct field: pump_id)
   app.get("/api/assets/pump/:pumpId", async (req: Request, res: Response) => {
     try {
       const pumpId = Number(req.params.pumpId);
@@ -146,7 +146,7 @@ export function registerRoutes(app: Express) {
       const { data, error } = await supabase
         .from("assets")
         .select("*")
-        .eq("pumpId", pumpId);
+        .eq("pump_id", pumpId); // ✅ fixed
 
       if (error) return res.status(500).json({ message: error.message });
       return res.json(data);
@@ -181,7 +181,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // ✅ Create asset (fix: pumpId field)
+  // ✅ Create asset (fix: pump_id field)
   app.post("/api/assets", async (req, res) => {
     try {
       const b = req.body || {};
@@ -196,7 +196,7 @@ export function registerRoutes(app: Express) {
         b.category_id === "" || b.categoryId === "" || b.category_id == null
           ? null
           : b.category_id ?? b.categoryId;
-      const pumpId = b.pumpId ?? b.pump_id ?? null;
+      const pump_id = b.pump_id ?? b.pumpId ?? null; // ✅ fixed
       console.log("BODY RECEIVED:", req.body);
 
       if (!asset_name || !assetNumber) {
@@ -212,29 +212,28 @@ export function registerRoutes(app: Express) {
         units,
         remarks,
         category_id: category_id || null,
-        pumpId: pumpId ? Number(pumpId) : null,
+        pump_id: pump_id ? Number(pump_id) : null, // ✅ fixed
       };
       console.log("INSERT ROW:", JSON.stringify(insertRow));
 
-const { data, error } = await supabase
-  .from("assets")
-  .insert([insertRow])
-  .select("*")
-  .maybeSingle();
+      const { data, error } = await supabase
+        .from("assets")
+        .insert([insertRow])
+        .select("*")
+        .maybeSingle();
 
-if (error) {
-  console.error("SUPABASE INSERT ERROR:", JSON.stringify(error, null, 2));
-  return res.status(400).json({ message: "DB insert error", error });
-}
+      if (error) {
+        console.error("SUPABASE INSERT ERROR:", JSON.stringify(error, null, 2));
+        return res.status(400).json({ message: "DB insert error", error });
+      }
 
-return res.status(201).json(data);
-  } catch (e: any) {
-    return res.status(500).json({ message: e?.message || "Internal error creating asset" });
-  }
-});
+      return res.status(201).json(data);
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message || "Internal error creating asset" });
+    }
+  });
 
-
-  // ✅ Update asset (fix: pumpId field)
+  // ✅ Update asset (fix: pump_id field)
   app.put("/api/assets/:id", async (req, res) => {
     try {
       const id = Number(req.params.id);
@@ -268,7 +267,7 @@ return res.status(201).json(data);
 
       if ("pumpId" in b || "pump_id" in b) {
         const pid = b.pumpId ?? b.pump_id;
-        payload.pumpId = pid ? Number(pid) : null;
+        payload.pump_id = pid ? Number(pid) : null; // ✅ fixed
       }
 
       const { data, error } = await supabase

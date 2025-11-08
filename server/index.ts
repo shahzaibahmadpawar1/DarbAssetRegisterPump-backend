@@ -77,6 +77,19 @@ app.use(
   })
 );
 
+import cors from "cors";
+
+app.use(
+  cors({
+    origin: [
+      "https://azharalibuttar.com", // ✅ your frontend domain
+      "http://localhost:3000",      // optional, for local testing
+    ],
+    credentials: true, // ✅ allow cookies (for JWT)
+  })
+);
+
+
 // ✅ Routes
 registerRoutes(app);
 
