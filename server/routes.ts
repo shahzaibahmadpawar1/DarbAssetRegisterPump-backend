@@ -124,8 +124,6 @@ export function registerRoutes(app: Express) {
   });
 
   // ---------------- ASSETS ----------------
-
-  // list assets optionally filtered by pump_id/category_id
   app.get("/api/assets", async (req, res) => {
     try {
       const { pump_id, category_id } = req.query as any;
@@ -150,35 +148,16 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // assets under a specific pump (kept for pump page)
-  app.get("/api/assets/pump/:pumpId", async (req: Request, res: Response) => {
-    try {
-      const pumpId = Number(req.params.pumpId);
-      if (Number.isNaN(pumpId)) return res.status(400).json({ message: "Invalid pumpId" });
-
-      const { data, error } = await supabase
-        .from("assets")
-        .select("*")
-        .eq("pump_id", pumpId);
-
-      if (error) return res.status(500).json({ message: error.message });
-      return res.json(data);
-    } catch (e: any) {
-      return res.status(500).json({ message: e?.message || "Internal error" });
-    }
-  });
-
+  // ✅ Create asset (fixed mapping)
   app.post("/api/assets", async (req, res) => {
     try {
       const b = req.body || {};
-
-      // ✅ Force immediate log flush for Vercel
       console.log("🟢 DEBUG CREATE BODY:", JSON.stringify(b, null, 2));
-      process.stdout.write("🟢 DEBUG CREATE BODY flushed\n");
 
-      const asset_name = b.asset_name ?? b.assetName ?? b.asset ?? null;
-      const assetNumber = b.assetNumber ?? b.asset_number ?? b.assetNo ?? null;
-      const serial_number = b.serial_number ?? b.serialNumber ?? b.serial ?? null;
+      // fixed mapping
+      const asset_name = b.asset_name ?? b.assetName ?? null;
+      const asset_number = b.asset_number ?? b.assetNumber ?? null;
+      const serial_number = b.serial_number ?? b.serialNumber ?? null;
       const barcode = b.barcode ?? null;
       const quantity = b.quantity ? Number(b.quantity) : null;
       const units = b.units ?? null;
@@ -186,16 +165,9 @@ export function registerRoutes(app: Express) {
       const category_id = b.category_id ?? b.categoryId ?? null;
       const pump_id = b.pump_id ?? b.pumpId ?? null;
 
-      console.log("🟢 Parsed fields:", {
-        asset_name,
-        assetNumber,
-        serial_number,
-        pump_id,
-        category_id,
-      });
-      process.stdout.write("🟢 Parsed fields flushed\n");
+      console.log("🟢 Parsed fields:", { asset_name, asset_number, serial_number, pump_id, category_id });
 
-      if (!asset_name || !assetNumber || !serial_number) {
+      if (!asset_name || !asset_number || !serial_number) {
         return res.status(400).json({ message: "Missing required fields" });
       }
 
@@ -204,7 +176,7 @@ export function registerRoutes(app: Express) {
         .insert([
           {
             asset_name,
-            assetNumber,
+            asset_number,
             serial_number,
             barcode,
             quantity,
@@ -225,15 +197,11 @@ export function registerRoutes(app: Express) {
       return res.status(201).json(data);
     } catch (e: any) {
       console.error("Unexpected error:", e);
-      return res
-        .status(500)
-        .json({ message: e?.message || "Internal server error" });
+      return res.status(500).json({ message: e?.message || "Internal server error" });
     }
   });
 
-
-
-  // update asset (incl. reassign pump/category)
+  // update asset
   app.put("/api/assets/:id", async (req, res) => {
     try {
       const id = Number(req.params.id);
@@ -243,7 +211,7 @@ export function registerRoutes(app: Express) {
       const payload: any = {};
 
       if ("assetName" in b || "asset_name" in b) payload.asset_name = b.asset_name ?? b.assetName;
-      if ("assetNumber" in b || "asset_number" in b) payload.assetNumber = b.assetNumber ?? b.asset_number;
+      if ("assetNumber" in b || "asset_number" in b) payload.asset_number = b.asset_number ?? b.assetNumber;
       if ("serialNumber" in b || "serial_number" in b) payload.serial_number = b.serial_number ?? b.serialNumber;
       if ("barcode" in b) payload.barcode = b.barcode ?? null;
       if ("quantity" in b) payload.quantity = b.quantity == null ? null : Number(b.quantity);
@@ -267,7 +235,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // assign helper (optional)
+  // assign helper
   app.put("/api/assets/:id/assign", async (req, res) => {
     try {
       const id = Number(req.params.id);
@@ -277,7 +245,7 @@ export function registerRoutes(app: Express) {
         .from("assets")
         .update({
           pump_id: pump_id == null ? null : Number(pump_id),
-          category_id: category_id || null
+          category_id: category_id || null,
         })
         .eq("id", id)
         .select("*")
@@ -289,7 +257,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // delete
+  // delete asset
   app.delete("/api/assets/:id", async (req, res) => {
     const id = Number(req.params.id);
     const { error } = await supabase.from("assets").delete().eq("id", id);
