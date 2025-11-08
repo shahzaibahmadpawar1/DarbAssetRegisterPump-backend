@@ -187,7 +187,7 @@ export function registerRoutes(app: Express) {
       const b = req.body || {};
       const asset_name = b.asset_name ?? b.assetName ?? null;
       const assetNumber = b.assetNumber ?? b.asset_number ?? null;
-      const serialNumber = b.serialNumber ?? b.serial_number ?? null;
+      const serial_number = b.serial_number ?? b.serialNumber ?? null;
       const barcode = b.barcode ?? null;
       const quantity = b.quantity ? Number(b.quantity) : null;
       const units = b.units ?? null;
@@ -206,7 +206,7 @@ export function registerRoutes(app: Express) {
       const insertRow: any = {
         asset_name,
         assetNumber,
-        serialNumber,
+        serial_number,
         barcode,
         quantity,
         units,
@@ -249,7 +249,8 @@ export function registerRoutes(app: Express) {
         payload.assetNumber = b.assetNumber ?? b.asset_number;
 
       if ("serialNumber" in b || "serial_number" in b)
-        payload.serialNumber = b.serialNumber ?? b.serial_number;
+        payload.serial_number = b.serial_number ?? b.serialNumber;
+
 
       if ("barcode" in b) payload.barcode = b.barcode ?? null;
 
