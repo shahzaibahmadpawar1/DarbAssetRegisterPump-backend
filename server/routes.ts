@@ -9,13 +9,10 @@ export function registerRoutes(app: Express) {
   const TOKEN_COOKIE_NAME = "token";
   const TOKEN_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-  // ----------------------------
-  // AUTH ROUTES
-  // ----------------------------
+  // ---------------- AUTH ----------------
   app.post("/api/login", async (req: Request, res: Response) => {
     const { username, password } = req.body;
-    if (!username || !password)
-      return res.status(400).json({ message: "Missing credentials" });
+    if (!username || !password) return res.status(400).json({ message: "Missing credentials" });
 
     const { data: user, error } = await supabase
       .from("users")
@@ -26,7 +23,6 @@ export function registerRoutes(app: Express) {
     if (error || !user) return res.status(401).json({ message: "Invalid credentials" });
 
     const passwordOk = password === user.password_hash;
-
     if (!passwordOk) return res.status(401).json({ message: "Invalid credentials" });
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
@@ -65,9 +61,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // ----------------------------
-  // PUMPS
-  // ----------------------------
+  // ---------------- PUMPS ----------------
   app.get("/api/pumps", async (_req, res) => {
     const { data, error } = await supabase.from("pumps").select("*").order("id", { ascending: false });
     if (error) return res.status(500).json({ message: error.message });
@@ -76,8 +70,7 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/pumps", async (req, res) => {
     const { name, location, manager } = req.body;
-    if (!name || !location || !manager)
-      return res.status(400).json({ message: "Missing fields" });
+    if (!name || !location || !manager) return res.status(400).json({ message: "Missing fields" });
 
     const { data, error } = await supabase
       .from("pumps")
@@ -110,9 +103,7 @@ export function registerRoutes(app: Express) {
     res.status(204).send();
   });
 
-  // ----------------------------
-  // CATEGORIES
-  // ----------------------------
+  // --------------- CATEGORIES ---------------
   app.get("/api/categories", async (_req, res) => {
     const { data, error } = await supabase.from("categories").select("*").order("name", { ascending: true });
     if (error) return res.status(500).json({ message: error.message });
@@ -132,45 +123,23 @@ export function registerRoutes(app: Express) {
     return res.status(201).json(data);
   });
 
-  // ----------------------------
-  // ASSETS
-  // ----------------------------
+  // ---------------- ASSETS ----------------
 
-  // ✅ Assets by pump (correct field: pump_id)
-  app.get("/api/assets/pump/:pumpId", async (req: Request, res: Response) => {
-    try {
-      const pumpId = Number(req.params.pumpId);
-      if (Number.isNaN(pumpId))
-        return res.status(400).json({ message: "Invalid pumpId" });
-
-      const { data, error } = await supabase
-        .from("assets")
-        .select("*")
-        .eq("pump_id", pumpId); // ✅ fixed
-
-      if (error) return res.status(500).json({ message: error.message });
-      return res.json(data);
-    } catch (e: any) {
-      return res.status(500).json({ message: e?.message || "Internal error" });
-    }
-  });
-
-  // ✅ List assets (optional category filter)
+  // list assets optionally filtered by pump_id/category_id
   app.get("/api/assets", async (req, res) => {
     try {
-      const { categoryId } = req.query;
-      const query = supabase.from("assets").select("*").order("id", { ascending: false });
-      const { data: assets, error } = await query;
-      if (error) return res.status(500).json({ message: error.message });
+      const { pump_id, category_id } = req.query as any;
+      let query = supabase.from("assets").select("*").order("id", { ascending: false });
 
-      let list = assets || [];
-      if (categoryId != null) {
-        list = list.filter((a: any) => String(a.category_id) === String(categoryId));
-      }
+      if (pump_id != null && pump_id !== "") query = query.eq("pump_id", Number(pump_id));
+      if (category_id != null && category_id !== "") query = query.eq("category_id", category_id);
+
+      const { data, error } = await query;
+      if (error) return res.status(500).json({ message: error.message });
 
       const { data: cats } = await supabase.from("categories").select("id, name");
       const cmap = new Map((cats || []).map((c: any) => [c.id, c.name]));
-      const withNames = list.map((a: any) => ({
+      const withNames = (data || []).map((a: any) => ({
         ...a,
         categoryName: a.category_id ? cmap.get(a.category_id) : null,
       }));
@@ -181,7 +150,25 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // ✅ Create asset (fix: pump_id field)
+  // assets under a specific pump (kept for pump page)
+  app.get("/api/assets/pump/:pumpId", async (req: Request, res: Response) => {
+    try {
+      const pumpId = Number(req.params.pumpId);
+      if (Number.isNaN(pumpId)) return res.status(400).json({ message: "Invalid pumpId" });
+
+      const { data, error } = await supabase
+        .from("assets")
+        .select("*")
+        .eq("pump_id", pumpId);
+
+      if (error) return res.status(500).json({ message: error.message });
+      return res.json(data);
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
+  // create asset (pump_id optional)
   app.post("/api/assets", async (req, res) => {
     try {
       const b = req.body || {};
@@ -189,17 +176,13 @@ export function registerRoutes(app: Express) {
       const assetNumber = b.assetNumber ?? b.asset_number ?? null;
       const serial_number = b.serial_number ?? b.serialNumber ?? null;
       const barcode = b.barcode ?? null;
-      const quantity = b.quantity ? Number(b.quantity) : null;
+      const quantity = b.quantity == null ? null : Number(b.quantity);
       const units = b.units ?? null;
       const remarks = b.remarks ?? null;
-      const category_id =
-        b.category_id === "" || b.categoryId === "" || b.category_id == null
-          ? null
-          : b.category_id ?? b.categoryId;
-      const pump_id = b.pump_id ?? b.pumpId ?? null; // ✅ fixed
-      console.log("BODY RECEIVED:", req.body);
+      const category_id = b.category_id || b.categoryId || null;
+      const pump_id = b.pump_id == null ? null : Number(b.pump_id);
 
-      if (!asset_name || !assetNumber) {
+      if (!asset_name || !assetNumber || !serial_number || !units) {
         return res.status(400).json({ message: "Missing required fields" });
       }
 
@@ -211,10 +194,9 @@ export function registerRoutes(app: Express) {
         quantity,
         units,
         remarks,
-        category_id: category_id || null,
-        pump_id: pump_id ? Number(pump_id) : null, // ✅ fixed
+        category_id,
+        pump_id,
       };
-      console.log("INSERT ROW:", JSON.stringify(insertRow));
 
       const { data, error } = await supabase
         .from("assets")
@@ -222,18 +204,14 @@ export function registerRoutes(app: Express) {
         .select("*")
         .maybeSingle();
 
-      if (error) {
-        console.error("SUPABASE INSERT ERROR:", JSON.stringify(error, null, 2));
-        return res.status(400).json({ message: "DB insert error", error });
-      }
-
+      if (error) return res.status(400).json({ message: "DB insert error", error });
       return res.status(201).json(data);
     } catch (e: any) {
       return res.status(500).json({ message: e?.message || "Internal error creating asset" });
     }
   });
 
-  // ✅ Update asset (fix: pump_id field)
+  // update asset (incl. reassign pump/category)
   app.put("/api/assets/:id", async (req, res) => {
     try {
       const id = Number(req.params.id);
@@ -242,34 +220,15 @@ export function registerRoutes(app: Express) {
       const b = req.body || {};
       const payload: any = {};
 
-      if ("assetName" in b || "asset_name" in b)
-        payload.asset_name = b.asset_name ?? b.assetName;
-
-      if ("assetNumber" in b || "asset_number" in b)
-        payload.assetNumber = b.assetNumber ?? b.asset_number;
-
-      if ("serialNumber" in b || "serial_number" in b)
-        payload.serial_number = b.serial_number ?? b.serialNumber;
-
-
+      if ("assetName" in b || "asset_name" in b) payload.asset_name = b.asset_name ?? b.assetName;
+      if ("assetNumber" in b || "asset_number" in b) payload.assetNumber = b.assetNumber ?? b.asset_number;
+      if ("serialNumber" in b || "serial_number" in b) payload.serial_number = b.serial_number ?? b.serialNumber;
       if ("barcode" in b) payload.barcode = b.barcode ?? null;
-
-      if ("quantity" in b)
-        payload.quantity = b.quantity == null ? null : Number(b.quantity);
-
+      if ("quantity" in b) payload.quantity = b.quantity == null ? null : Number(b.quantity);
       if ("units" in b) payload.units = b.units ?? null;
-
       if ("remarks" in b) payload.remarks = b.remarks ?? null;
-
-      if ("categoryId" in b || "category_id" in b) {
-        const cat = b.category_id ?? b.categoryId;
-        payload.category_id = cat || null;
-      }
-
-      if ("pumpId" in b || "pump_id" in b) {
-        const pid = b.pumpId ?? b.pump_id;
-        payload.pump_id = pid ? Number(pid) : null; // ✅ fixed
-      }
+      if ("categoryId" in b || "category_id" in b) payload.category_id = b.category_id ?? b.categoryId ?? null;
+      if ("pumpId" in b || "pump_id" in b) payload.pump_id = b.pump_id == null ? null : Number(b.pump_id);
 
       const { data, error } = await supabase
         .from("assets")
@@ -286,7 +245,29 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // DELETE
+  // assign helper (optional)
+  app.put("/api/assets/:id/assign", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (Number.isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+      const { pump_id = null, category_id = null } = req.body || {};
+      const { data, error } = await supabase
+        .from("assets")
+        .update({
+          pump_id: pump_id == null ? null : Number(pump_id),
+          category_id: category_id || null
+        })
+        .eq("id", id)
+        .select("*")
+        .maybeSingle();
+      if (error) return res.status(500).json({ message: error.message });
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error assigning asset" });
+    }
+  });
+
+  // delete
   app.delete("/api/assets/:id", async (req, res) => {
     const id = Number(req.params.id);
     const { error } = await supabase.from("assets").delete().eq("id", id);
@@ -294,26 +275,30 @@ export function registerRoutes(app: Express) {
     res.status(204).send();
   });
 
-  // ----------------------------
-  // REPORT ROUTES
-  // ----------------------------
+  // --------------- REPORTS ----------------
   app.get("/api/reports/assets-by-category", async (_req, res) => {
     const { data, error } = await supabase
       .from("assets")
-      .select("id, asset_name, category_id, pumps(name)")
+      .select("id, asset_name, category_id, pump_id")
       .order("category_id", { ascending: true });
     if (error) return res.status(500).json({ message: error.message });
     return res.json(data);
   });
 
   app.get("/api/reports/all-assets", async (_req, res) => {
-    const { data, error } = await supabase.from("assets").select("*").order("id", { ascending: false });
+    const { data, error } = await supabase
+      .from("assets")
+      .select("*")
+      .order("id", { ascending: false });
     if (error) return res.status(500).json({ message: error.message });
     return res.json(data);
   });
 
   app.get("/api/reports/all-stations", async (_req, res) => {
-    const { data, error } = await supabase.from("pumps").select("*").order("id", { ascending: false });
+    const { data, error } = await supabase
+      .from("pumps")
+      .select("*")
+      .order("id", { ascending: false });
     if (error) return res.status(500).json({ message: error.message });
     return res.json(data);
   });
