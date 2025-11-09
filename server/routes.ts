@@ -217,7 +217,7 @@ export function registerRoutes(app: Express) {
       if ("quantity" in b) payload.quantity = b.quantity == null ? null : Number(b.quantity);
       if ("units" in b) payload.units = b.units ?? null;
       if ("remarks" in b) payload.remarks = b.remarks ?? null;
-      if ("categoryId" in b || "category_id" in b) payload.category_id = b.category_id ?? b.categoryId ?? null;
+      if ("categoryId" in b || "category_id" in b) payload.category_id = b.category_id ?? b.category_id ?? null;
       if ("pumpId" in b || "pump_id" in b) payload.pump_id = b.pump_id == null ? null : Number(b.pump_id);
 
       const { data, error } = await supabase
