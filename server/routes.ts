@@ -167,7 +167,7 @@ export function registerRoutes(app: Express) {
 
       console.log("🟢 Parsed fields:", { asset_name, asset_number, serial_number, pump_id, category_id });
 
-      if (!asset_name || !asset_number) {
+      if ( !asset_number) {
         return res.status(400).json({ message: "Missing required fields" });
       }
 
