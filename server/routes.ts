@@ -163,13 +163,13 @@ export function registerRoutes(app: Express) {
       const units = b.units ?? null;
       const remarks = b.remarks ?? null;
       const category_id = b.category_id ?? b.categoryId ?? null;
-      const pump_id = b.pump_id ?? b.pump_id ?? null;
+      const pump_id = b.pump_id ?? b.pumpId ?? null;
 
       console.log("🟢 Parsed fields:", { asset_name, asset_number, serial_number, pump_id, category_id });
 
-      if ( !asset_number) {
-        return res.status(400).json({ message: "Missing required fields" });
-      }
+      // if (!asset_name || !asset_number || !serial_number) {
+      //   return res.status(400).json({ message: "Missing required fields" });
+      // }
 
       const { data, error } = await supabase
         .from("assets")
