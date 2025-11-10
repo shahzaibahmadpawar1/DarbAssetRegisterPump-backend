@@ -19,24 +19,28 @@ const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://azharalibuttar.c
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
 const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 // ===============================
-// ✅ CORS
+// ✅ CORS CONFIGURATION (final)
 // ===============================
+const allowedOrigins = [
+    "https://azharalibuttar.com",
+    "https://www.azharalibuttar.com",
+    "http://localhost:5173", // optional for local testing
+];
 app.use((0, cors_1.default)({
-    origin: (origin, cb) => {
-        const allowed = [
-            "https://azharalibuttar.com",
-            "https://www.azharalibuttar.com",
-        ];
-        if (!origin || allowed.includes(origin))
-            cb(null, true);
-        else
-            cb(new Error("CORS blocked: " + origin));
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl)
+        if (!origin)
+            return callback(null, true);
+        if (allowedOrigins.includes(origin))
+            return callback(null, true);
+        return callback(new Error("CORS blocked from origin: " + origin));
     },
-    credentials: true,
+    credentials: true, // ✅ required for cookies
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
 }));
-app.options("*", (0, cors_1.default)());
+// ✅ Explicit preflight handling
+app.options("*", (0, cors_1.default)({ origin: allowedOrigins, credentials: true }));
 // ===============================
 // ✅ Middleware
 // ===============================
@@ -66,6 +70,13 @@ app.use((0, express_session_1.default)({
         sameSite: "none",
         maxAge: 7 * 24 * 60 * 60 * 1000,
     },
+}));
+app.use((0, cors_1.default)({
+    origin: [
+        "https://azharalibuttar.com", // ✅ your frontend domain
+        "http://localhost:3000", // optional, for local testing
+    ],
+    credentials: true, // ✅ allow cookies (for JWT)
 }));
 // ✅ Routes
 (0, routes_1.registerRoutes)(app);
