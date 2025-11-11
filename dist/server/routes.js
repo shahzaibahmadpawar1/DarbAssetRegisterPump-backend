@@ -59,11 +59,32 @@ function registerRoutes(app) {
         }
     });
     // ---------------- PUMPS ----------------
+    // 🟢 Return pumps with asset count
     app.get("/api/pumps", async (_req, res) => {
-        const { data, error } = await supabaseClient_1.supabase.from("pumps").select("*").order("id", { ascending: false });
-        if (error)
-            return res.status(500).json({ message: error.message });
-        return res.json(data);
+        try {
+            const { data: pumps, error } = await supabaseClient_1.supabase
+                .from("pumps")
+                .select("*")
+                .order("id", { ascending: false });
+            if (error)
+                return res.status(500).json({ message: error.message });
+            // Count assets for each pump
+            const { data: assets } = await supabaseClient_1.supabase.from("assets").select("pump_id");
+            const assetCountMap = new Map();
+            (assets || []).forEach((a) => {
+                if (a.pump_id)
+                    assetCountMap.set(a.pump_id, (assetCountMap.get(a.pump_id) || 0) + 1);
+            });
+            const result = pumps.map((p) => ({
+                ...p,
+                assetCount: assetCountMap.get(p.id) || 0,
+            }));
+            return res.json(result);
+        }
+        catch (e) {
+            console.error("Error fetching pumps:", e);
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
     });
     app.post("/api/pumps", async (req, res) => {
         const { name, location, manager } = req.body;
@@ -119,6 +140,14 @@ function registerRoutes(app) {
         if (error)
             return res.status(500).json({ message: error.message });
         return res.status(201).json(data);
+    });
+    // delete category
+    app.delete("/api/categories/:id", async (req, res) => {
+        const { id } = req.params;
+        const { error } = await supabaseClient_1.supabase.from("categories").delete().eq("id", id);
+        if (error)
+            return res.status(500).json({ message: error.message });
+        res.status(204).send();
     });
     // ---------------- ASSETS ----------------
     app.get("/api/assets", async (req, res) => {
