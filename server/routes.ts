@@ -158,19 +158,27 @@ export function registerRoutes(app: Express) {
   app.get("/api/assets", async (req, res) => {
     try {
       const { pump_id, category_id } = req.query as any;
-      let query = supabase.from("assets").select("*").order("id", { ascending: false });
 
+      let query = supabase.from("assets").select("*").order("id", { ascending: false });
       if (pump_id != null && pump_id !== "") query = query.eq("pump_id", Number(pump_id));
       if (category_id != null && category_id !== "") query = query.eq("category_id", category_id);
 
       const { data, error } = await query;
       if (error) return res.status(500).json({ message: error.message });
 
-      const { data: cats } = await supabase.from("categories").select("id, name");
+      // 🔹 fetch lookup tables once
+      const [{ data: cats }, { data: pumps }] = await Promise.all([
+        supabase.from("categories").select("id, name"),
+        supabase.from("pumps").select("id, name"),
+      ]);
+
       const cmap = new Map((cats || []).map((c: any) => [c.id, c.name]));
+      const pmap = new Map((pumps || []).map((p: any) => [p.id, p.name]));
+
       const withNames = (data || []).map((a: any) => ({
         ...a,
         categoryName: a.category_id ? cmap.get(a.category_id) : null,
+        pumpName: a.pump_id ? pmap.get(a.pump_id) : null,
       }));
 
       return res.json(withNames);
@@ -178,6 +186,7 @@ export function registerRoutes(app: Express) {
       return res.status(500).json({ message: e?.message || "Internal error" });
     }
   });
+
 
   // ✅ Create asset (fixed mapping)
   app.post("/api/assets", async (req, res) => {
@@ -307,13 +316,26 @@ export function registerRoutes(app: Express) {
   });
 
   app.get("/api/reports/all-assets", async (_req, res) => {
-    const { data, error } = await supabase
-      .from("assets")
-      .select("*")
-      .order("id", { ascending: false });
+    const { data, error } = await supabase.from("assets").select("*").order("id", { ascending: false });
     if (error) return res.status(500).json({ message: error.message });
-    return res.json(data);
+
+    const [{ data: cats }, { data: pumps }] = await Promise.all([
+      supabase.from("categories").select("id, name"),
+      supabase.from("pumps").select("id, name"),
+    ]);
+
+    const cmap = new Map((cats || []).map((c: any) => [c.id, c.name]));
+    const pmap = new Map((pumps || []).map((p: any) => [p.id, p.name]));
+
+    const withNames = (data || []).map((a: any) => ({
+      ...a,
+      categoryName: a.category_id ? cmap.get(a.category_id) : null,
+      pumpName: a.pump_id ? pmap.get(a.pump_id) : null,
+    }));
+
+    return res.json(withNames);
   });
+
 
   app.get("/api/reports/all-stations", async (_req, res) => {
     const { data, error } = await supabase

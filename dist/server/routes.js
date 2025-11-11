@@ -161,11 +161,17 @@ function registerRoutes(app) {
             const { data, error } = await query;
             if (error)
                 return res.status(500).json({ message: error.message });
-            const { data: cats } = await supabaseClient_1.supabase.from("categories").select("id, name");
+            // 🔹 fetch lookup tables once
+            const [{ data: cats }, { data: pumps }] = await Promise.all([
+                supabaseClient_1.supabase.from("categories").select("id, name"),
+                supabaseClient_1.supabase.from("pumps").select("id, name"),
+            ]);
             const cmap = new Map((cats || []).map((c) => [c.id, c.name]));
+            const pmap = new Map((pumps || []).map((p) => [p.id, p.name]));
             const withNames = (data || []).map((a) => ({
                 ...a,
                 categoryName: a.category_id ? cmap.get(a.category_id) : null,
+                pumpName: a.pump_id ? pmap.get(a.pump_id) : null,
             }));
             return res.json(withNames);
         }
@@ -305,13 +311,21 @@ function registerRoutes(app) {
         return res.json(data);
     });
     app.get("/api/reports/all-assets", async (_req, res) => {
-        const { data, error } = await supabaseClient_1.supabase
-            .from("assets")
-            .select("*")
-            .order("id", { ascending: false });
+        const { data, error } = await supabaseClient_1.supabase.from("assets").select("*").order("id", { ascending: false });
         if (error)
             return res.status(500).json({ message: error.message });
-        return res.json(data);
+        const [{ data: cats }, { data: pumps }] = await Promise.all([
+            supabaseClient_1.supabase.from("categories").select("id, name"),
+            supabaseClient_1.supabase.from("pumps").select("id, name"),
+        ]);
+        const cmap = new Map((cats || []).map((c) => [c.id, c.name]));
+        const pmap = new Map((pumps || []).map((p) => [p.id, p.name]));
+        const withNames = (data || []).map((a) => ({
+            ...a,
+            categoryName: a.category_id ? cmap.get(a.category_id) : null,
+            pumpName: a.pump_id ? pmap.get(a.pump_id) : null,
+        }));
+        return res.json(withNames);
     });
     app.get("/api/reports/all-stations", async (_req, res) => {
         const { data, error } = await supabaseClient_1.supabase
