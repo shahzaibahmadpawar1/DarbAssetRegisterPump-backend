@@ -293,12 +293,33 @@ function registerRoutes(app) {
         }
     });
     // delete asset
-    app.delete("/api/assets/:id", async (req, res) => {
-        const id = Number(req.params.id);
-        const { error } = await supabaseClient_1.supabase.from("assets").delete().eq("id", id);
-        if (error)
-            return res.status(500).json({ message: error.message });
-        res.status(204).send();
+    app.delete("/api/pumps/:id", async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            if (Number.isNaN(id))
+                return res.status(400).json({ message: "Invalid pump ID" });
+            // 1️⃣ Check if any assets are assigned to this pump
+            const { data: assets, error: assetError } = await supabaseClient_1.supabase
+                .from("assets")
+                .select("id")
+                .eq("pump_id", id);
+            if (assetError)
+                return res.status(500).json({ message: assetError.message });
+            if (assets && assets.length > 0) {
+                // 2️⃣ Prevent deletion
+                return res
+                    .status(400)
+                    .json({ message: "Cannot delete this pump because assets are assigned to it." });
+            }
+            // 3️⃣ Safe to delete
+            const { error } = await supabaseClient_1.supabase.from("pumps").delete().eq("id", id);
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.status(204).send();
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal server error" });
+        }
     });
     // --------------- REPORTS ----------------
     app.get("/api/reports/assets-by-category", async (_req, res) => {
