@@ -32,14 +32,15 @@ export function registerRoutes(app: Express) {
       expiresIn: "7d",
     });
 
-    // ✅ FIXED COOKIE SETTINGS (persistent across refreshes)
     res.cookie(TOKEN_COOKIE_NAME, token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production" ? true : false, // ✅ allow in dev
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // ✅ proper cookie behavior
-      maxAge: TOKEN_MAX_AGE, // 7 days
+      secure: process.env.NODE_ENV === "production",       // must be https in prod
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      domain: ".azharalibuttar.com",                       // ✅ share across apex + www
+      maxAge: TOKEN_MAX_AGE,
       path: "/",
     });
+
 
     return res.json({ ok: true });
   });

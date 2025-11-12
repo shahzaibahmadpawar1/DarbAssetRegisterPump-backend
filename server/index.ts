@@ -17,31 +17,27 @@ const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
 const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 
 // ===============================
-// ✅ CORS CONFIGURATION (final)
+// ✅ CORS CONFIGURATION (single use)
 // ===============================
 const allowedOrigins = [
   "https://azharalibuttar.com",
   "https://www.azharalibuttar.com",
-  "http://localhost:5173", // optional for local testing
+  "http://localhost:5173", // dev
 ];
 
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps or curl)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error("CORS blocked from origin: " + origin));
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // allow no-origin (mobile apps, curl)
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error("CORS blocked from origin: " + origin));
     },
-    credentials: true, // ✅ required for cookies
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   })
 );
 
-// ✅ Explicit preflight handling
+// Optional: preflight helper
 app.options("*", cors({ origin: allowedOrigins, credentials: true }));
-
 
 // ===============================
 // ✅ Middleware
@@ -49,18 +45,17 @@ app.options("*", cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// Attach user from JWT cookie
+// Attach user from JWT cookie (optional convenience)
 app.use((req: any, _res, next) => {
   const token = req.cookies?.token;
   if (token) {
-    try {
-      req.user = jwt.verify(token, JWT_SECRET);
-    } catch {
-      // ignore bad token
-    }
+    try { req.user = jwt.verify(token, JWT_SECRET); } catch { /* ignore */ }
   }
   next();
 });
+
+// ❌ Not needed when using JWT cookies; remove it to avoid extra cookie noise
+// app.use(session({ ... }))
 
 // ✅ Session
 app.use(
