@@ -25,12 +25,15 @@ function registerRoutes(app) {
         const passwordOk = password === user.password_hash;
         if (!passwordOk)
             return res.status(401).json({ message: "Invalid credentials" });
-        const token = jsonwebtoken_1.default.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
+        const token = jsonwebtoken_1.default.sign({ userId: user.id }, JWT_SECRET, {
+            expiresIn: "7d",
+        });
+        // ✅ FIXED COOKIE SETTINGS (persistent across refreshes)
         res.cookie(TOKEN_COOKIE_NAME, token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: "none",
-            maxAge: TOKEN_MAX_AGE,
+            secure: process.env.NODE_ENV === "production" ? true : false, // ✅ allow in dev
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // ✅ proper cookie behavior
+            maxAge: TOKEN_MAX_AGE, // 7 days
             path: "/",
         });
         return res.json({ ok: true });
@@ -59,7 +62,6 @@ function registerRoutes(app) {
         }
     });
     // ---------------- PUMPS ----------------
-    // 🟢 Return pumps with asset count
     app.get("/api/pumps", async (_req, res) => {
         try {
             const { data: pumps, error } = await supabaseClient_1.supabase
@@ -68,7 +70,6 @@ function registerRoutes(app) {
                 .order("id", { ascending: false });
             if (error)
                 return res.status(500).json({ message: error.message });
-            // Count assets for each pump
             const { data: assets } = await supabaseClient_1.supabase.from("assets").select("pump_id");
             const assetCountMap = new Map();
             (assets || []).forEach((a) => {
@@ -114,16 +115,42 @@ function registerRoutes(app) {
             return res.status(404).json({ message: "Pump not found" });
         res.json(data);
     });
+    // Prevent deletion if assets exist
     app.delete("/api/pumps/:id", async (req, res) => {
-        const id = Number(req.params.id);
-        const { error } = await supabaseClient_1.supabase.from("pumps").delete().eq("id", id);
-        if (error)
-            return res.status(500).json({ message: error.message });
-        res.status(204).send();
+        try {
+            const id = Number(req.params.id);
+            if (Number.isNaN(id))
+                return res.status(400).json({ message: "Invalid pump ID" });
+            const { data: assets, error: assetError } = await supabaseClient_1.supabase
+                .from("assets")
+                .select("id")
+                .eq("pump_id", id);
+            if (assetError)
+                return res.status(500).json({ message: assetError.message });
+            if (assets && assets.length > 0) {
+                return res
+                    .status(400)
+                    .json({
+                    message: "Cannot delete this pump because assets are assigned to it.",
+                });
+            }
+            const { error } = await supabaseClient_1.supabase.from("pumps").delete().eq("id", id);
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.status(204).send();
+        }
+        catch (e) {
+            res
+                .status(500)
+                .json({ message: e?.message || "Internal server error" });
+        }
     });
     // --------------- CATEGORIES ---------------
     app.get("/api/categories", async (_req, res) => {
-        const { data, error } = await supabaseClient_1.supabase.from("categories").select("*").order("name", { ascending: true });
+        const { data, error } = await supabaseClient_1.supabase
+            .from("categories")
+            .select("*")
+            .order("name", { ascending: true });
         if (error)
             return res.status(500).json({ message: error.message });
         return res.json(data);
@@ -141,7 +168,6 @@ function registerRoutes(app) {
             return res.status(500).json({ message: error.message });
         return res.status(201).json(data);
     });
-    // delete category
     app.delete("/api/categories/:id", async (req, res) => {
         const { id } = req.params;
         const { error } = await supabaseClient_1.supabase.from("categories").delete().eq("id", id);
@@ -153,7 +179,10 @@ function registerRoutes(app) {
     app.get("/api/assets", async (req, res) => {
         try {
             const { pump_id, category_id } = req.query;
-            let query = supabaseClient_1.supabase.from("assets").select("*").order("id", { ascending: false });
+            let query = supabaseClient_1.supabase
+                .from("assets")
+                .select("*")
+                .order("id", { ascending: false });
             if (pump_id != null && pump_id !== "")
                 query = query.eq("pump_id", Number(pump_id));
             if (category_id != null && category_id !== "")
@@ -161,7 +190,6 @@ function registerRoutes(app) {
             const { data, error } = await query;
             if (error)
                 return res.status(500).json({ message: error.message });
-            // 🔹 fetch lookup tables once
             const [{ data: cats }, { data: pumps }] = await Promise.all([
                 supabaseClient_1.supabase.from("categories").select("id, name"),
                 supabaseClient_1.supabase.from("pumps").select("id, name"),
@@ -176,15 +204,15 @@ function registerRoutes(app) {
             return res.json(withNames);
         }
         catch (e) {
-            return res.status(500).json({ message: e?.message || "Internal error" });
+            return res
+                .status(500)
+                .json({ message: e?.message || "Internal error" });
         }
     });
-    // ✅ Create asset (fixed mapping)
+    // ✅ CREATE ASSET — supports asset_value
     app.post("/api/assets", async (req, res) => {
         try {
             const b = req.body || {};
-            console.log("🟢 DEBUG CREATE BODY:", JSON.stringify(b, null, 2));
-            // fixed mapping
             const asset_name = b.asset_name ?? b.assetName ?? null;
             const asset_number = b.asset_number ?? b.assetNumber ?? null;
             const serial_number = b.serial_number ?? b.serialNumber ?? null;
@@ -194,10 +222,7 @@ function registerRoutes(app) {
             const remarks = b.remarks ?? null;
             const category_id = b.category_id ?? b.categoryId ?? null;
             const pump_id = b.pump_id ?? b.pumpId ?? null;
-            console.log("🟢 Parsed fields:", { asset_name, asset_number, serial_number, pump_id, category_id });
-            // if (!asset_name || !asset_number || !serial_number) {
-            //   return res.status(400).json({ message: "Missing required fields" });
-            // }
+            const asset_value = b.asset_value ? Number(b.asset_value) : 0;
             const { data, error } = await supabaseClient_1.supabase
                 .from("assets")
                 .insert([
@@ -211,22 +236,22 @@ function registerRoutes(app) {
                     remarks,
                     category_id,
                     pump_id,
+                    asset_value,
                 },
             ])
                 .select("*")
                 .maybeSingle();
-            if (error) {
-                console.error("Supabase insert error:", error);
+            if (error)
                 return res.status(400).json({ message: "DB insert error", error });
-            }
             return res.status(201).json(data);
         }
         catch (e) {
-            console.error("Unexpected error:", e);
-            return res.status(500).json({ message: e?.message || "Internal server error" });
+            return res
+                .status(500)
+                .json({ message: e?.message || "Internal server error" });
         }
     });
-    // update asset
+    // ✅ UPDATE ASSET — supports asset_value
     app.put("/api/assets/:id", async (req, res) => {
         try {
             const id = Number(req.params.id);
@@ -249,9 +274,11 @@ function registerRoutes(app) {
             if ("remarks" in b)
                 payload.remarks = b.remarks ?? null;
             if ("categoryId" in b || "category_id" in b)
-                payload.category_id = b.category_id ?? b.category_id ?? null;
+                payload.category_id = b.category_id ?? b.categoryId ?? null;
             if ("pumpId" in b || "pump_id" in b)
                 payload.pump_id = b.pump_id == null ? null : Number(b.pump_id);
+            if ("asset_value" in b)
+                payload.asset_value = Number(b.asset_value) || 0;
             const { data, error } = await supabaseClient_1.supabase
                 .from("assets")
                 .update(payload)
@@ -265,10 +292,12 @@ function registerRoutes(app) {
             res.json(data);
         }
         catch (e) {
-            res.status(500).json({ message: e?.message || "Internal error updating asset" });
+            res
+                .status(500)
+                .json({ message: e?.message || "Internal error updating asset" });
         }
     });
-    // assign helper
+    // ASSIGN
     app.put("/api/assets/:id/assign", async (req, res) => {
         try {
             const id = Number(req.params.id);
@@ -289,39 +318,12 @@ function registerRoutes(app) {
             res.json(data);
         }
         catch (e) {
-            res.status(500).json({ message: e?.message || "Internal error assigning asset" });
+            res
+                .status(500)
+                .json({ message: e?.message || "Internal error assigning asset" });
         }
     });
-    // delete asset
-    app.delete("/api/pumps/:id", async (req, res) => {
-        try {
-            const id = Number(req.params.id);
-            if (Number.isNaN(id))
-                return res.status(400).json({ message: "Invalid pump ID" });
-            // 1️⃣ Check if any assets are assigned to this pump
-            const { data: assets, error: assetError } = await supabaseClient_1.supabase
-                .from("assets")
-                .select("id")
-                .eq("pump_id", id);
-            if (assetError)
-                return res.status(500).json({ message: assetError.message });
-            if (assets && assets.length > 0) {
-                // 2️⃣ Prevent deletion
-                return res
-                    .status(400)
-                    .json({ message: "Cannot delete this pump because assets are assigned to it." });
-            }
-            // 3️⃣ Safe to delete
-            const { error } = await supabaseClient_1.supabase.from("pumps").delete().eq("id", id);
-            if (error)
-                return res.status(500).json({ message: error.message });
-            res.status(204).send();
-        }
-        catch (e) {
-            res.status(500).json({ message: e?.message || "Internal server error" });
-        }
-    });
-    // --------------- REPORTS ----------------
+    // REPORTS
     app.get("/api/reports/assets-by-category", async (_req, res) => {
         const { data, error } = await supabaseClient_1.supabase
             .from("assets")
@@ -332,7 +334,10 @@ function registerRoutes(app) {
         return res.json(data);
     });
     app.get("/api/reports/all-assets", async (_req, res) => {
-        const { data, error } = await supabaseClient_1.supabase.from("assets").select("*").order("id", { ascending: false });
+        const { data, error } = await supabaseClient_1.supabase
+            .from("assets")
+            .select("*")
+            .order("id", { ascending: false });
         if (error)
             return res.status(500).json({ message: error.message });
         const [{ data: cats }, { data: pumps }] = await Promise.all([
