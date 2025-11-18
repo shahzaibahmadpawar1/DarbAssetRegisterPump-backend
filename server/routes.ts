@@ -751,7 +751,14 @@ export function registerRoutes(app: Express) {
         }));
       });
 
-      return res.json(flattened);
+      const responsePayload =
+        pumpFilter != null
+          ? flattened.filter(
+              (row: any) => Number(row.pump_id) === Number(pumpFilter)
+            )
+          : flattened;
+
+      return res.json(responsePayload);
     } catch (e: any) {
       return res.status(500).json({ message: e?.message || "Internal error" });
     }

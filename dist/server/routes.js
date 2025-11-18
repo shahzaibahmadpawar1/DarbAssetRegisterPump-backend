@@ -651,7 +651,10 @@ function registerRoutes(app) {
                             (Number(limitedAsset.asset_value) || 0),
                 }));
             });
-            return res.json(flattened);
+            const responsePayload = pumpFilter != null
+                ? flattened.filter((row) => Number(row.pump_id) === Number(pumpFilter))
+                : flattened;
+            return res.json(responsePayload);
         }
         catch (e) {
             return res.status(500).json({ message: e?.message || "Internal error" });
