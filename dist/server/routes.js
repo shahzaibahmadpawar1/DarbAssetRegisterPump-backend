@@ -627,12 +627,13 @@ function registerRoutes(app) {
                 const assignments = pumpFilter != null
                     ? (asset.assignments || []).filter((assignment) => Number(assignment.pump_id) === Number(pumpFilter))
                     : asset.assignments || [];
+                const limitedAsset = pumpFilter != null ? { ...asset, assignments } : asset;
                 if (!assignments.length) {
                     if (pumpFilter != null)
                         return [];
                     return [
                         {
-                            ...asset,
+                            ...limitedAsset,
                             assignmentQuantity: 0,
                             pump_id: null,
                             pumpName: null,
@@ -641,13 +642,13 @@ function registerRoutes(app) {
                     ];
                 }
                 return assignments.map((assignment) => ({
-                    ...asset,
+                    ...limitedAsset,
                     assignmentQuantity: assignment.quantity,
                     pump_id: assignment.pump_id,
                     pumpName: assignment.pump_name,
                     assignmentValue: assignment.assignment_value ??
                         Number(assignment.quantity || 0) *
-                            (Number(asset.asset_value) || 0),
+                            (Number(limitedAsset.asset_value) || 0),
                 }));
             });
             return res.json(flattened);

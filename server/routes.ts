@@ -723,11 +723,14 @@ export function registerRoutes(app: Express) {
               )
             : asset.assignments || [];
 
+        const limitedAsset =
+          pumpFilter != null ? { ...asset, assignments } : asset;
+
         if (!assignments.length) {
           if (pumpFilter != null) return [];
           return [
             {
-              ...asset,
+              ...limitedAsset,
               assignmentQuantity: 0,
               pump_id: null,
               pumpName: null,
@@ -737,14 +740,14 @@ export function registerRoutes(app: Express) {
         }
 
         return assignments.map((assignment: any) => ({
-          ...asset,
+          ...limitedAsset,
           assignmentQuantity: assignment.quantity,
           pump_id: assignment.pump_id,
           pumpName: assignment.pump_name,
           assignmentValue:
             assignment.assignment_value ??
             Number(assignment.quantity || 0) *
-              (Number(asset.asset_value) || 0),
+              (Number(limitedAsset.asset_value) || 0),
         }));
       });
 
