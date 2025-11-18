@@ -71,24 +71,41 @@ export function registerRoutes(app: Express) {
 
     const hydrated = assets.map((asset: any) => {
       const assignmentList = assignmentsByAsset.get(asset.id) || [];
+      const unitValue = Number(asset.asset_value) || 0;
       const totalAssigned = assignmentList.reduce(
         (total: number, assignment: any) => total + (assignment.quantity || 0),
         0
       );
+      const totalAssignedValue = totalAssigned * unitValue;
+      const totalValue =
+        asset.quantity == null ? null : (asset.quantity || 0) * unitValue;
       const remainingQuantity =
         asset.quantity == null
           ? null
           : Math.max((asset.quantity || 0) - totalAssigned, 0);
+      const remainingValue =
+        remainingQuantity == null ? null : remainingQuantity * unitValue;
+
+      const enrichedAssignments = assignmentList.map((assignment: any) => ({
+        ...assignment,
+        assignment_value:
+          assignment.assignment_value ??
+          (Number(assignment.quantity || 0) * unitValue),
+      }));
 
       return {
         ...asset,
-        assignments: assignmentList,
+        asset_value: unitValue,
+        assignments: enrichedAssignments,
         totalAssigned,
+        totalAssignedValue,
+        totalValue,
         remainingQuantity,
+        remainingValue,
         categoryName: asset.category_id
           ? catMap.get(asset.category_id) ?? null
           : null,
-        pumpName: assignmentList[0]?.pump_name ?? null,
+        pumpName: enrichedAssignments[0]?.pump_name ?? null,
       };
     });
 
@@ -372,7 +389,7 @@ export function registerRoutes(app: Express) {
       let filteredAssetIds: number[] | null = null;
 
       if (pumpFilter) {
-        const { data: assignmentRows, error: filterError } = await supabase
+      const { data: assignmentRows, error: filterError } = await supabase
           .from("asset_assignments")
           .select("asset_id")
           .eq("pump_id", pumpFilter);
@@ -701,7 +718,8 @@ export function registerRoutes(app: Express) {
         const assignments =
           pumpFilter != null
             ? (asset.assignments || []).filter(
-                (assignment: any) => assignment.pump_id === pumpFilter
+                (assignment: any) =>
+                  Number(assignment.pump_id) === Number(pumpFilter)
               )
             : asset.assignments || [];
 
@@ -713,6 +731,7 @@ export function registerRoutes(app: Express) {
               assignmentQuantity: 0,
               pump_id: null,
               pumpName: null,
+              assignmentValue: 0,
             },
           ];
         }
@@ -722,6 +741,10 @@ export function registerRoutes(app: Express) {
           assignmentQuantity: assignment.quantity,
           pump_id: assignment.pump_id,
           pumpName: assignment.pump_name,
+          assignmentValue:
+            assignment.assignment_value ??
+            Number(assignment.quantity || 0) *
+              (Number(asset.asset_value) || 0),
         }));
       });
 

@@ -60,19 +60,32 @@ function registerRoutes(app) {
         });
         const hydrated = assets.map((asset) => {
             const assignmentList = assignmentsByAsset.get(asset.id) || [];
+            const unitValue = Number(asset.asset_value) || 0;
             const totalAssigned = assignmentList.reduce((total, assignment) => total + (assignment.quantity || 0), 0);
+            const totalAssignedValue = totalAssigned * unitValue;
+            const totalValue = asset.quantity == null ? null : (asset.quantity || 0) * unitValue;
             const remainingQuantity = asset.quantity == null
                 ? null
                 : Math.max((asset.quantity || 0) - totalAssigned, 0);
+            const remainingValue = remainingQuantity == null ? null : remainingQuantity * unitValue;
+            const enrichedAssignments = assignmentList.map((assignment) => ({
+                ...assignment,
+                assignment_value: assignment.assignment_value ??
+                    (Number(assignment.quantity || 0) * unitValue),
+            }));
             return {
                 ...asset,
-                assignments: assignmentList,
+                asset_value: unitValue,
+                assignments: enrichedAssignments,
                 totalAssigned,
+                totalAssignedValue,
+                totalValue,
                 remainingQuantity,
+                remainingValue,
                 categoryName: asset.category_id
                     ? catMap.get(asset.category_id) ?? null
                     : null,
-                pumpName: assignmentList[0]?.pump_name ?? null,
+                pumpName: enrichedAssignments[0]?.pump_name ?? null,
             };
         });
         return { data: hydrated, error: null };
@@ -612,7 +625,7 @@ function registerRoutes(app) {
             });
             const flattened = filteredAssets.flatMap((asset) => {
                 const assignments = pumpFilter != null
-                    ? (asset.assignments || []).filter((assignment) => assignment.pump_id === pumpFilter)
+                    ? (asset.assignments || []).filter((assignment) => Number(assignment.pump_id) === Number(pumpFilter))
                     : asset.assignments || [];
                 if (!assignments.length) {
                     if (pumpFilter != null)
@@ -623,6 +636,7 @@ function registerRoutes(app) {
                             assignmentQuantity: 0,
                             pump_id: null,
                             pumpName: null,
+                            assignmentValue: 0,
                         },
                     ];
                 }
@@ -631,6 +645,9 @@ function registerRoutes(app) {
                     assignmentQuantity: assignment.quantity,
                     pump_id: assignment.pump_id,
                     pumpName: assignment.pump_name,
+                    assignmentValue: assignment.assignment_value ??
+                        Number(assignment.quantity || 0) *
+                            (Number(asset.asset_value) || 0),
                 }));
             });
             return res.json(flattened);
