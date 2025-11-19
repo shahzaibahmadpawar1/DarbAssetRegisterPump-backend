@@ -334,9 +334,17 @@ function registerRoutes(app) {
     app.get("/api/assets", async (req, res) => {
         try {
             const { pump_id, category_id } = req.query;
-            const pumpFilter = pump_id != null && pump_id !== "" ? Number(pump_id) : null;
+            const pumpIdParam = pump_id ?? "";
+            const parsedPumpId = pumpIdParam &&
+                pumpIdParam !== "all" &&
+                pumpIdParam !== "null" &&
+                pumpIdParam !== "undefined"
+                ? Number(pumpIdParam)
+                : null;
+            const pumpFilter = parsedPumpId != null && !Number.isNaN(parsedPumpId) ? parsedPumpId : null;
+            const hasPumpFilter = pumpFilter != null;
             let filteredAssetIds = null;
-            if (pumpFilter) {
+            if (hasPumpFilter) {
                 const { data: assignmentRows, error: filterError } = await supabaseClient_1.supabase
                     .from("asset_assignments")
                     .select("asset_id")
@@ -589,10 +597,18 @@ function registerRoutes(app) {
     app.get("/api/reports/assets-by-category", async (req, res) => {
         try {
             const { pump_id, category_id } = req.query;
-            const pumpFilter = pump_id != null && pump_id !== "" ? Number(pump_id) : null;
+            const pumpIdParam = pump_id ?? "";
+            const parsedPumpId = pumpIdParam &&
+                pumpIdParam !== "all" &&
+                pumpIdParam !== "null" &&
+                pumpIdParam !== "undefined"
+                ? Number(pumpIdParam)
+                : null;
+            const pumpFilter = parsedPumpId != null && !Number.isNaN(parsedPumpId) ? parsedPumpId : null;
+            const hasPumpFilter = pumpFilter != null;
             let filteredAssetIds = null;
             // 1. Pre-filter assets IDs if a station is selected
-            if (pumpFilter) {
+            if (hasPumpFilter) {
                 const { data: assignmentRows, error: filterError } = await supabaseClient_1.supabase
                     .from("asset_assignments")
                     .select("asset_id")
@@ -608,7 +624,7 @@ function registerRoutes(app) {
                 .from("assets")
                 .select("*")
                 .order("category_id", { ascending: true });
-            if (category_id)
+            if (category_id && category_id !== "all")
                 assetQuery = assetQuery.eq("category_id", category_id);
             if (filteredAssetIds)
                 assetQuery = assetQuery.in("id", filteredAssetIds);
@@ -621,7 +637,7 @@ function registerRoutes(app) {
                 return res.status(500).json({ message: hydrated.error.message });
             // 4. Filter top-level assets (Category/ID check)
             const filteredAssets = (hydrated.data || []).filter((asset) => {
-                if (category_id)
+                if (category_id && category_id !== "all")
                     return asset.category_id === category_id;
                 if (filteredAssetIds)
                     return filteredAssetIds.includes(asset.id);
@@ -632,15 +648,15 @@ function registerRoutes(app) {
                 const allAssignments = asset.assignments || [];
                 // A. Strict Filter: Isolate assignments for the selected station
                 let relevantAssignments = allAssignments;
-                if (pumpFilter != null) {
+                if (hasPumpFilter) {
                     relevantAssignments = allAssignments.filter((assignment) => Number(assignment.pump_id) === Number(pumpFilter));
                 }
                 // B. If station selected but this asset has NO assignments there, hide it entirely.
-                if (pumpFilter != null && relevantAssignments.length === 0) {
+                if (hasPumpFilter && relevantAssignments.length === 0) {
                     return [];
                 }
                 // C. If no station selected (View All) and asset is unassigned, show ghost row.
-                if (pumpFilter == null && relevantAssignments.length === 0) {
+                if (!hasPumpFilter && relevantAssignments.length === 0) {
                     return [
                         {
                             ...asset,
@@ -662,7 +678,6 @@ function registerRoutes(app) {
                             (Number(asset.asset_value) || 0),
                 }));
             });
-            // 6. Return result (No extra filtering needed)
             return res.json(flattened);
         }
         catch (e) {

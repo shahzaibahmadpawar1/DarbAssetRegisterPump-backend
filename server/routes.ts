@@ -384,11 +384,20 @@ export function registerRoutes(app: Express) {
   app.get("/api/assets", async (req, res) => {
     try {
       const { pump_id, category_id } = req.query as Record<string, string>;
+      const pumpIdParam = pump_id ?? "";
+      const parsedPumpId =
+        pumpIdParam &&
+        pumpIdParam !== "all" &&
+        pumpIdParam !== "null" &&
+        pumpIdParam !== "undefined"
+          ? Number(pumpIdParam)
+          : null;
       const pumpFilter =
-        pump_id != null && pump_id !== "" ? Number(pump_id) : null;
+        parsedPumpId != null && !Number.isNaN(parsedPumpId) ? parsedPumpId : null;
+      const hasPumpFilter = pumpFilter != null;
       let filteredAssetIds: number[] | null = null;
 
-      if (pumpFilter) {
+      if (hasPumpFilter) {
         const { data: assignmentRows, error: filterError } = await supabase
           .from("asset_assignments")
           .select("asset_id")
@@ -674,12 +683,21 @@ export function registerRoutes(app: Express) {
   app.get("/api/reports/assets-by-category", async (req, res) => {
     try {
       const { pump_id, category_id } = req.query as Record<string, string>;
+      const pumpIdParam = pump_id ?? "";
+      const parsedPumpId =
+        pumpIdParam &&
+        pumpIdParam !== "all" &&
+        pumpIdParam !== "null" &&
+        pumpIdParam !== "undefined"
+          ? Number(pumpIdParam)
+          : null;
       const pumpFilter =
-        pump_id != null && pump_id !== "" ? Number(pump_id) : null;
+        parsedPumpId != null && !Number.isNaN(parsedPumpId) ? parsedPumpId : null;
+      const hasPumpFilter = pumpFilter != null;
       let filteredAssetIds: number[] | null = null;
 
       // 1. Pre-filter assets IDs if a station is selected
-      if (pumpFilter) {
+      if (hasPumpFilter) {
         const { data: assignmentRows, error: filterError } = await supabase
           .from("asset_assignments")
           .select("asset_id")
@@ -699,7 +717,8 @@ export function registerRoutes(app: Express) {
         .from("assets")
         .select("*")
         .order("category_id", { ascending: true });
-      if (category_id) assetQuery = assetQuery.eq("category_id", category_id);
+      if (category_id && category_id !== "all")
+        assetQuery = assetQuery.eq("category_id", category_id);
       if (filteredAssetIds) assetQuery = assetQuery.in("id", filteredAssetIds);
 
       const { data, error } = await assetQuery;
@@ -712,7 +731,8 @@ export function registerRoutes(app: Express) {
 
       // 4. Filter top-level assets (Category/ID check)
       const filteredAssets = (hydrated.data || []).filter((asset: any) => {
-        if (category_id) return asset.category_id === category_id;
+        if (category_id && category_id !== "all")
+          return asset.category_id === category_id;
         if (filteredAssetIds) return filteredAssetIds.includes(asset.id);
         return true;
       });
@@ -723,19 +743,19 @@ export function registerRoutes(app: Express) {
 
         // A. Strict Filter: Isolate assignments for the selected station
         let relevantAssignments = allAssignments;
-        if (pumpFilter != null) {
+        if (hasPumpFilter) {
           relevantAssignments = allAssignments.filter(
             (assignment: any) => Number(assignment.pump_id) === Number(pumpFilter)
           );
         }
 
         // B. If station selected but this asset has NO assignments there, hide it entirely.
-        if (pumpFilter != null && relevantAssignments.length === 0) {
+        if (hasPumpFilter && relevantAssignments.length === 0) {
           return [];
         }
 
         // C. If no station selected (View All) and asset is unassigned, show ghost row.
-        if (pumpFilter == null && relevantAssignments.length === 0) {
+        if (!hasPumpFilter && relevantAssignments.length === 0) {
           return [
             {
               ...asset,
@@ -760,9 +780,7 @@ export function registerRoutes(app: Express) {
         }));
       });
 
-      // 6. Return result (No extra filtering needed)
       return res.json(flattened);
-
     } catch (e: any) {
       return res.status(500).json({ message: e?.message || "Internal error" });
     }
