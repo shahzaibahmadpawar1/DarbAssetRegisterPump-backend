@@ -591,6 +591,7 @@ function registerRoutes(app) {
             const { pump_id, category_id } = req.query;
             const pumpFilter = pump_id != null && pump_id !== "" ? Number(pump_id) : null;
             let filteredAssetIds = null;
+            // 1. Pre-filter assets IDs if a station is selected
             if (pumpFilter) {
                 const { data: assignmentRows, error: filterError } = await supabaseClient_1.supabase
                     .from("asset_assignments")
@@ -602,6 +603,7 @@ function registerRoutes(app) {
                 if (filteredAssetIds.length === 0)
                     return res.json([]);
             }
+            // 2. Fetch Assets
             let assetQuery = supabaseClient_1.supabase
                 .from("assets")
                 .select("*")
@@ -613,9 +615,11 @@ function registerRoutes(app) {
             const { data, error } = await assetQuery;
             if (error)
                 return res.status(500).json({ message: error.message });
+            // 3. Hydrate with assignments and details
             const hydrated = await hydrateAssets(data || []);
             if (hydrated.error)
                 return res.status(500).json({ message: hydrated.error.message });
+            // 4. Filter top-level assets (Category/ID check)
             const filteredAssets = (hydrated.data || []).filter((asset) => {
                 if (category_id)
                     return asset.category_id === category_id;
@@ -623,17 +627,23 @@ function registerRoutes(app) {
                     return filteredAssetIds.includes(asset.id);
                 return true;
             });
+            // 5. Flatten and STRICTLY filter assignments
             const flattened = filteredAssets.flatMap((asset) => {
-                const assignments = pumpFilter != null
-                    ? (asset.assignments || []).filter((assignment) => Number(assignment.pump_id) === Number(pumpFilter))
-                    : asset.assignments || [];
-                const limitedAsset = pumpFilter != null ? { ...asset, assignments } : asset;
-                if (!assignments.length) {
-                    if (pumpFilter != null)
-                        return [];
+                const allAssignments = asset.assignments || [];
+                // A. Strict Filter: Isolate assignments for the selected station
+                let relevantAssignments = allAssignments;
+                if (pumpFilter != null) {
+                    relevantAssignments = allAssignments.filter((assignment) => Number(assignment.pump_id) === Number(pumpFilter));
+                }
+                // B. If station selected but this asset has NO assignments there, hide it entirely.
+                if (pumpFilter != null && relevantAssignments.length === 0) {
+                    return [];
+                }
+                // C. If no station selected (View All) and asset is unassigned, show ghost row.
+                if (pumpFilter == null && relevantAssignments.length === 0) {
                     return [
                         {
-                            ...limitedAsset,
+                            ...asset,
                             assignmentQuantity: 0,
                             pump_id: null,
                             pumpName: null,
@@ -641,20 +651,19 @@ function registerRoutes(app) {
                         },
                     ];
                 }
-                return assignments.map((assignment) => ({
-                    ...limitedAsset,
+                // D. Map valid assignments to rows
+                return relevantAssignments.map((assignment) => ({
+                    ...asset, // Keeps parent asset info
                     assignmentQuantity: assignment.quantity,
                     pump_id: assignment.pump_id,
                     pumpName: assignment.pump_name,
                     assignmentValue: assignment.assignment_value ??
                         Number(assignment.quantity || 0) *
-                            (Number(limitedAsset.asset_value) || 0),
+                            (Number(asset.asset_value) || 0),
                 }));
             });
-            const responsePayload = pumpFilter != null
-                ? flattened.filter((row) => Number(row.pump_id) === Number(pumpFilter))
-                : flattened;
-            return res.json(responsePayload);
+            // 6. Return result (No extra filtering needed)
+            return res.json(flattened);
         }
         catch (e) {
             return res.status(500).json({ message: e?.message || "Internal error" });
