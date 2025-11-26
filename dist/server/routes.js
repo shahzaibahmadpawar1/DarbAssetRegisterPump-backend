@@ -33,59 +33,99 @@ function registerRoutes(app) {
         if (!assets || assets.length === 0)
             return { data: [], error: null };
         const assetIds = assets.map((a) => a.id);
-        const [{ data: cats, error: catError }, { data: pumps, error: pumpError }, { data: assignmentRows, error: assignmentError },] = await Promise.all([
+        const [{ data: cats, error: catError }, { data: pumps, error: pumpError }, { data: assignmentRows, error: assignmentError }, { data: batchRows, error: batchError },] = await Promise.all([
             supabaseClient_1.supabase.from("categories").select("id, name"),
             supabaseClient_1.supabase.from("pumps").select("id, name"),
             supabaseClient_1.supabase
                 .from("asset_assignments")
                 .select("id, asset_id, pump_id, quantity, pumps(name)")
                 .in("asset_id", assetIds),
+            supabaseClient_1.supabase
+                .from("asset_purchase_batches")
+                .select("*")
+                .in("asset_id", assetIds),
         ]);
-        if (catError || pumpError || assignmentError) {
-            return { data: null, error: catError || pumpError || assignmentError };
+        // Fetch batch allocations separately after we have assignment IDs
+        const assignmentIds = (assignmentRows || []).map((r) => r.id);
+        const { data: allocationRows, error: allocationError } = assignmentIds.length > 0
+            ? await supabaseClient_1.supabase
+                .from("assignment_batch_allocations")
+                .select("assignment_id, batch_id, quantity, asset_purchase_batches(purchase_price)")
+                .in("assignment_id", assignmentIds)
+            : { data: [], error: null };
+        if (catError || pumpError || assignmentError || batchError || allocationError) {
+            return {
+                data: null,
+                error: catError || pumpError || assignmentError || batchError || allocationError,
+            };
         }
         const catMap = new Map((cats || []).map((c) => [c.id, c.name]));
         const pumpMap = new Map((pumps || []).map((p) => [p.id, p.name]));
+        const batchesByAsset = new Map();
+        const allocationsByAssignment = new Map();
+        (batchRows || []).forEach((batch) => {
+            const collection = batchesByAsset.get(batch.asset_id) || [];
+            collection.push(batch);
+            batchesByAsset.set(batch.asset_id, collection);
+        });
+        (allocationRows || []).forEach((alloc) => {
+            const collection = allocationsByAssignment.get(alloc.assignment_id) || [];
+            collection.push({
+                batch_id: alloc.batch_id,
+                quantity: alloc.quantity,
+                unit_price: Number(alloc.asset_purchase_batches?.purchase_price || 0),
+            });
+            allocationsByAssignment.set(alloc.assignment_id, collection);
+        });
         const assignmentsByAsset = new Map();
         (assignmentRows || []).forEach((row) => {
             const collection = assignmentsByAsset.get(row.asset_id) || [];
+            const batchAllocations = allocationsByAssignment.get(row.id) || [];
+            const assignmentValue = batchAllocations.length > 0
+                ? calculateAssignmentValue(batchAllocations)
+                : Number(row.quantity || 0) * (Number(assets.find((a) => a.id === row.asset_id)?.asset_value) || 0);
             collection.push({
                 id: row.id,
                 asset_id: row.asset_id,
                 pump_id: row.pump_id,
                 quantity: row.quantity,
                 pump_name: row.pumps?.name ?? pumpMap.get(row.pump_id) ?? null,
+                assignment_value: assignmentValue,
+                batch_allocations: batchAllocations,
             });
             assignmentsByAsset.set(row.asset_id, collection);
         });
         const hydrated = assets.map((asset) => {
             const assignmentList = assignmentsByAsset.get(asset.id) || [];
-            const unitValue = Number(asset.asset_value) || 0;
+            const batches = batchesByAsset.get(asset.id) || [];
+            // Calculate total value from batches
+            const totalBatchValue = batches.reduce((sum, batch) => sum + Number(batch.purchase_price) * Number(batch.quantity), 0);
+            const remainingBatchValue = batches.reduce((sum, batch) => sum + Number(batch.purchase_price) * Number(batch.remaining_quantity), 0);
             const totalAssigned = assignmentList.reduce((total, assignment) => total + (assignment.quantity || 0), 0);
-            const totalAssignedValue = totalAssigned * unitValue;
-            const totalValue = asset.quantity == null ? null : (asset.quantity || 0) * unitValue;
-            const remainingQuantity = asset.quantity == null
-                ? null
-                : Math.max((asset.quantity || 0) - totalAssigned, 0);
-            const remainingValue = remainingQuantity == null ? null : remainingQuantity * unitValue;
-            const enrichedAssignments = assignmentList.map((assignment) => ({
-                ...assignment,
-                assignment_value: assignment.assignment_value ??
-                    (Number(assignment.quantity || 0) * unitValue),
-            }));
+            const totalAssignedValue = assignmentList.reduce((total, assignment) => total + (assignment.assignment_value || 0), 0);
+            const totalQuantity = batches.reduce((sum, batch) => sum + Number(batch.quantity), 0);
+            const remainingQuantity = batches.reduce((sum, batch) => sum + Number(batch.remaining_quantity), 0);
+            const unitValue = Number(asset.asset_value) || 0;
             return {
                 ...asset,
                 asset_value: unitValue,
-                assignments: enrichedAssignments,
+                assignments: assignmentList,
+                batches: batches.map((b) => ({
+                    id: b.id,
+                    purchase_date: b.purchase_date,
+                    purchase_price: Number(b.purchase_price),
+                    quantity: Number(b.quantity),
+                    remaining_quantity: Number(b.remaining_quantity),
+                })),
                 totalAssigned,
                 totalAssignedValue,
-                totalValue,
-                remainingQuantity,
-                remainingValue,
+                totalValue: totalBatchValue || (asset.quantity ? asset.quantity * unitValue : null),
+                remainingQuantity: remainingQuantity || (asset.quantity ? Math.max((asset.quantity || 0) - totalAssigned, 0) : null),
+                remainingValue: remainingBatchValue || (asset.quantity ? Math.max((asset.quantity || 0) - totalAssigned, 0) * unitValue : null),
                 categoryName: asset.category_id
                     ? catMap.get(asset.category_id) ?? null
                     : null,
-                pumpName: enrichedAssignments[0]?.pump_name ?? null,
+                pumpName: assignmentList[0]?.pump_name ?? null,
             };
         });
         return { data: hydrated, error: null };
@@ -106,6 +146,18 @@ function registerRoutes(app) {
         }));
     };
     const replaceAssetAssignments = async (assetId, assignments) => {
+        // Get existing assignments to delete their batch allocations
+        const { data: existingAssignments } = await supabaseClient_1.supabase
+            .from("asset_assignments")
+            .select("id")
+            .eq("asset_id", assetId);
+        if (existingAssignments && existingAssignments.length > 0) {
+            const assignmentIds = existingAssignments.map((a) => a.id);
+            await supabaseClient_1.supabase
+                .from("assignment_batch_allocations")
+                .delete()
+                .in("assignment_id", assignmentIds);
+        }
         const { error: deleteError } = await supabaseClient_1.supabase
             .from("asset_assignments")
             .delete()
@@ -114,13 +166,38 @@ function registerRoutes(app) {
             return { error: deleteError };
         if (assignments.length === 0)
             return { error: null };
-        const rows = assignments.map((assignment) => ({
+        // Create assignments and allocate from batches
+        const assignmentRows = assignments.map((assignment) => ({
             asset_id: assetId,
             pump_id: assignment.pump_id,
             quantity: assignment.quantity,
         }));
-        const { error } = await supabaseClient_1.supabase.from("asset_assignments").insert(rows);
-        return { error };
+        const { data: insertedAssignments, error: insertError } = await supabaseClient_1.supabase
+            .from("asset_assignments")
+            .insert(assignmentRows)
+            .select("id, quantity");
+        if (insertError)
+            return { error: insertError };
+        // Allocate from batches for each assignment
+        for (let i = 0; i < insertedAssignments.length; i++) {
+            const assignment = insertedAssignments[i];
+            const requiredQty = assignment.quantity;
+            const allocations = await allocateFromBatches(assetId, requiredQty);
+            if (!allocations) {
+                // Rollback: delete created assignments
+                await supabaseClient_1.supabase
+                    .from("asset_assignments")
+                    .delete()
+                    .in("id", insertedAssignments.map((a) => a.id));
+                return {
+                    error: {
+                        message: `Insufficient stock. Cannot allocate ${requiredQty} units.`,
+                    },
+                };
+            }
+            await createBatchAllocations(assignment.id, allocations);
+        }
+        return { error: null };
     };
     const fetchAssignmentsTotal = async (assetId) => {
         const { data, error } = await supabaseClient_1.supabase
@@ -154,6 +231,67 @@ function registerRoutes(app) {
             };
         }
         return { ok: true, error: null };
+    };
+    // ========== BATCH FUNCTIONS ==========
+    const createPurchaseBatch = async (assetId, purchasePrice, quantity, purchaseDate) => {
+        const { data, error } = await supabaseClient_1.supabase
+            .from("asset_purchase_batches")
+            .insert([
+            {
+                asset_id: assetId,
+                purchase_price: purchasePrice,
+                quantity: quantity,
+                remaining_quantity: quantity,
+                purchase_date: purchaseDate || new Date().toISOString(),
+            },
+        ])
+            .select("*")
+            .maybeSingle();
+        return { data, error };
+    };
+    const allocateFromBatches = async (assetId, requiredQuantity) => {
+        const { data: batches, error } = await supabaseClient_1.supabase
+            .from("asset_purchase_batches")
+            .select("*")
+            .eq("asset_id", assetId)
+            .gt("remaining_quantity", 0)
+            .order("purchase_date", { ascending: true });
+        if (error || !batches || batches.length === 0)
+            return null;
+        const allocations = [];
+        let remaining = requiredQuantity;
+        for (const batch of batches) {
+            if (remaining <= 0)
+                break;
+            const available = batch.remaining_quantity;
+            const toAllocate = Math.min(remaining, available);
+            allocations.push({
+                batch_id: batch.id,
+                quantity: toAllocate,
+                unit_price: Number(batch.purchase_price),
+            });
+            remaining -= toAllocate;
+        }
+        if (remaining > 0) {
+            return null; // Insufficient stock
+        }
+        return allocations;
+    };
+    const createBatchAllocations = async (assignmentId, allocations) => {
+        if (allocations.length === 0)
+            return { error: null };
+        const rows = allocations.map((alloc) => ({
+            assignment_id: assignmentId,
+            batch_id: alloc.batch_id,
+            quantity: alloc.quantity,
+        }));
+        const { error } = await supabaseClient_1.supabase
+            .from("assignment_batch_allocations")
+            .insert(rows);
+        return { error };
+    };
+    const calculateAssignmentValue = (allocations) => {
+        return allocations.reduce((sum, alloc) => sum + alloc.quantity * alloc.unit_price, 0);
     };
     // ---------------- AUTH ----------------
     app.post("/api/login", async (req, res) => {
@@ -377,7 +515,7 @@ function registerRoutes(app) {
                 .json({ message: e?.message || "Internal error" });
         }
     });
-    // ✅ CREATE ASSET — supports asset_value
+    // ✅ CREATE ASSET — supports asset_value and purchase batches
     app.post("/api/assets", async (req, res) => {
         try {
             const b = req.body || {};
@@ -390,6 +528,8 @@ function registerRoutes(app) {
             const remarks = b.remarks ?? null;
             const category_id = b.category_id ?? b.categoryId ?? null;
             const asset_value = b.asset_value ? Number(b.asset_value) : 0;
+            const purchase_price = b.purchase_price ? Number(b.purchase_price) : asset_value;
+            const purchase_date = b.purchase_date || new Date().toISOString();
             const assignments = sanitizeAssignments(b.assignments);
             const { data, error } = await supabaseClient_1.supabase
                 .from("assets")
@@ -412,6 +552,14 @@ function registerRoutes(app) {
                 return res.status(400).json({ message: "DB insert error", error });
             if (!data)
                 return res.status(500).json({ message: "Asset insert failed" });
+            // Create purchase batch if price and quantity provided
+            if (purchase_price > 0 && quantity && quantity > 0) {
+                const { error: batchError } = await createPurchaseBatch(data.id, purchase_price, quantity, purchase_date ? new Date(purchase_date) : undefined);
+                if (batchError) {
+                    await supabaseClient_1.supabase.from("assets").delete().eq("id", data.id);
+                    return res.status(500).json({ message: batchError.message });
+                }
+            }
             if (assignments.length > 0) {
                 const capacityCheck = await ensureCapacity(data.id, quantity ?? 0, assignments);
                 if (!capacityCheck.ok) {
@@ -709,5 +857,60 @@ function registerRoutes(app) {
         if (error)
             return res.status(500).json({ message: error.message });
         return res.json(data);
+    });
+    // ========== BATCH ENDPOINTS ==========
+    // Get batches for an asset
+    app.get("/api/assets/:id/batches", async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            if (Number.isNaN(id))
+                return res.status(400).json({ message: "Invalid asset ID" });
+            const { data, error } = await supabaseClient_1.supabase
+                .from("asset_purchase_batches")
+                .select("*")
+                .eq("asset_id", id)
+                .order("purchase_date", { ascending: true });
+            if (error)
+                return res.status(500).json({ message: error.message });
+            return res.json(data || []);
+        }
+        catch (e) {
+            return res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    // Add new batch (inventory) to existing asset
+    app.post("/api/assets/:id/batches", async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            if (Number.isNaN(id))
+                return res.status(400).json({ message: "Invalid asset ID" });
+            const { purchase_price, quantity, purchase_date } = req.body;
+            if (!purchase_price || purchase_price <= 0)
+                return res.status(400).json({ message: "Purchase price required" });
+            if (!quantity || quantity <= 0)
+                return res.status(400).json({ message: "Quantity required" });
+            // Verify asset exists
+            const { data: asset, error: assetError } = await supabaseClient_1.supabase
+                .from("assets")
+                .select("id, quantity")
+                .eq("id", id)
+                .maybeSingle();
+            if (assetError || !asset)
+                return res.status(404).json({ message: "Asset not found" });
+            // Update asset quantity
+            const newQuantity = (asset.quantity || 0) + quantity;
+            await supabaseClient_1.supabase
+                .from("assets")
+                .update({ quantity: newQuantity })
+                .eq("id", id);
+            // Create batch
+            const { data: batch, error: batchError } = await createPurchaseBatch(id, Number(purchase_price), Number(quantity), purchase_date ? new Date(purchase_date) : undefined);
+            if (batchError)
+                return res.status(500).json({ message: batchError.message });
+            return res.status(201).json(batch);
+        }
+        catch (e) {
+            return res.status(500).json({ message: e?.message || "Internal error" });
+        }
     });
 }
