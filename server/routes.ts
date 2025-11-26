@@ -410,7 +410,7 @@ export function registerRoutes(app: Express) {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",       // must be https in prod
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      domain: ".azharalibuttar.com",                       // ✅ share across apex + www
+      domain: process.env.NODE_ENV === "production" ? ".azharalibuttar.com" : undefined,  // Only set domain in production
       maxAge: TOKEN_MAX_AGE,
       path: "/",
     });
@@ -420,13 +420,21 @@ export function registerRoutes(app: Express) {
   });
 
   app.post("/api/logout", (_req, res) => {
-    res.clearCookie(TOKEN_COOKIE_NAME, { path: "/" });
+    res.clearCookie(TOKEN_COOKIE_NAME, { 
+      path: "/",
+      domain: process.env.NODE_ENV === "production" ? ".azharalibuttar.com" : undefined,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    });
     res.json({ ok: true });
   });
 
   app.get("/api/me", async (req: Request, res: Response) => {
     const token = (req as any).cookies?.[TOKEN_COOKIE_NAME];
-    if (!token) return res.status(401).json({ authenticated: false });
+    if (!token) {
+      return res.status(200).json({ authenticated: false });
+    }
 
     try {
       const decoded = jwt.verify(token, JWT_SECRET) as any;
@@ -436,11 +444,14 @@ export function registerRoutes(app: Express) {
         .eq("id", decoded.userId)
         .maybeSingle();
 
-      if (error || !data)
-        return res.status(401).json({ authenticated: false });
+      if (error || !data) {
+        return res.status(200).json({ authenticated: false });
+      }
       return res.json({ authenticated: true, user: data });
-    } catch {
-      return res.status(401).json({ authenticated: false });
+    } catch (err) {
+      // Token expired or invalid - return unauthenticated but with 200 status
+      // This prevents the frontend from treating it as an error
+      return res.status(200).json({ authenticated: false });
     }
   });
 

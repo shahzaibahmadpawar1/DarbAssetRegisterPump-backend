@@ -57,7 +57,7 @@ app.use((req: any, _res, next) => {
 // ❌ Not needed when using JWT cookies; remove it to avoid extra cookie noise
 // app.use(session({ ... }))
 
-// ✅ Session
+// ✅ Session (optional - using JWT cookies instead, but keeping for compatibility)
 app.use(
   session({
     secret: SESSION_SECRET,
@@ -65,20 +65,11 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: true,
-      sameSite: "none",
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
+      domain: process.env.NODE_ENV === "production" ? ".azharalibuttar.com" : undefined,
     },
-  })
-);
-
-app.use(
-  cors({
-    origin: [
-      "https://azharalibuttar.com", // ✅ your frontend domain
-      "http://localhost:3000",      // optional, for local testing
-    ],
-    credentials: true, // ✅ allow cookies (for JWT)
   })
 );
 
