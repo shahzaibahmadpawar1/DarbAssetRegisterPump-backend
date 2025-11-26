@@ -352,7 +352,8 @@ export function registerRoutes(app: Express) {
     assetId: number,
     purchasePrice: number,
     quantity: number,
-    purchaseDate?: Date
+    purchaseDate?: Date,
+    remarks?: string | null
   ) => {
     const { data, error } = await supabase
       .from("asset_purchase_batches")
@@ -363,6 +364,7 @@ export function registerRoutes(app: Express) {
           quantity: quantity,
           remaining_quantity: quantity,
           purchase_date: purchaseDate || new Date().toISOString(),
+          remarks: remarks || null,
         },
       ])
       .select("*")
@@ -730,14 +732,9 @@ export function registerRoutes(app: Express) {
       const asset_number = b.asset_number ?? b.assetNumber ?? null;
       const serial_number = b.serial_number ?? b.serialNumber ?? null;
       const barcode = b.barcode ?? null;
-      const quantity =
-        b.quantity == null ? null : Number.isNaN(Number(b.quantity)) ? null : Number(b.quantity);
       const units = b.units ?? null;
-      const remarks = b.remarks ?? null;
       const category_id = b.category_id ?? b.categoryId ?? null;
-      const asset_value = b.asset_value ? Number(b.asset_value) : 0;
-      const purchase_price = b.purchase_price ? Number(b.purchase_price) : asset_value;
-      const purchase_date = b.purchase_date || new Date().toISOString();
+      const asset_value = 0; // Default value, not used anymore
       const assignments = sanitizeAssignments(b.assignments);
 
       const { data, error } = await supabase
@@ -748,9 +745,9 @@ export function registerRoutes(app: Express) {
             asset_number,
             serial_number,
             barcode,
-            quantity,
+            quantity: null, // Quantity is now managed through batches
             units,
-            remarks,
+            remarks: null, // Remarks are now in batches
             category_id,
             asset_value,
           },
@@ -762,24 +759,13 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ message: "DB insert error", error });
       if (!data) return res.status(500).json({ message: "Asset insert failed" });
 
-      // Create purchase batch if price and quantity provided
-      if (purchase_price > 0 && quantity && quantity > 0) {
-        const { error: batchError } = await createPurchaseBatch(
-          data.id,
-          purchase_price,
-          quantity,
-          purchase_date ? new Date(purchase_date) : undefined
-        );
-        if (batchError) {
-          await supabase.from("assets").delete().eq("id", data.id);
-          return res.status(500).json({ message: batchError.message });
-        }
-      }
+      // Note: Purchase batches are now created separately through the batches endpoint
+      // This endpoint no longer creates batches automatically
 
       if (assignments.length > 0) {
         const capacityCheck = await ensureCapacity(
           data.id,
-          quantity ?? 0,
+          null, // Quantity is now managed through batches
           assignments
         );
         if (!capacityCheck.ok) {
@@ -1143,7 +1129,7 @@ export function registerRoutes(app: Express) {
       if (Number.isNaN(id))
         return res.status(400).json({ message: "Invalid asset ID" });
 
-      const { purchase_price, quantity, purchase_date } = req.body;
+      const { purchase_price, quantity, purchase_date, remarks } = req.body;
       if (!purchase_price || purchase_price <= 0)
         return res.status(400).json({ message: "Purchase price required" });
       if (!quantity || quantity <= 0)
@@ -1171,7 +1157,8 @@ export function registerRoutes(app: Express) {
         id,
         Number(purchase_price),
         Number(quantity),
-        purchase_date ? new Date(purchase_date) : undefined
+        purchase_date ? new Date(purchase_date) : undefined,
+        remarks || null
       );
 
       if (batchError) return res.status(500).json({ message: batchError.message });

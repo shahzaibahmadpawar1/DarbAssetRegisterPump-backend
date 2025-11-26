@@ -13,20 +13,25 @@ function registerRoutes(app) {
     const sanitizeAssignments = (input) => {
         if (!Array.isArray(input))
             return [];
-        const merged = new Map();
+        // Don't merge when batch_id is specified - each assignment needs its own batch
+        const result = [];
         input.forEach((item) => {
             const pumpId = Number(item?.pump_id);
             const qty = Number(item?.quantity);
+            const batchId = item?.batch_id ? Number(item.batch_id) : undefined;
             if (!Number.isFinite(pumpId) || pumpId <= 0)
                 return;
             if (!Number.isFinite(qty) || qty <= 0)
                 return;
-            merged.set(pumpId, (merged.get(pumpId) || 0) + qty);
+            if (batchId !== undefined && (!Number.isFinite(batchId) || batchId <= 0))
+                return;
+            result.push({
+                pump_id: pumpId,
+                quantity: qty,
+                batch_id: batchId,
+            });
         });
-        return Array.from(merged.entries()).map(([pump_id, quantity]) => ({
-            pump_id,
-            quantity,
-        }));
+        return result;
     };
     const sumAssignmentQuantity = (assignments) => assignments.reduce((total, assignment) => total + assignment.quantity, 0);
     const hydrateAssets = async (assets) => {
@@ -105,7 +110,13 @@ function registerRoutes(app) {
             const totalAssignedValue = assignmentList.reduce((total, assignment) => total + (assignment.assignment_value || 0), 0);
             const totalQuantity = batches.reduce((sum, batch) => sum + Number(batch.quantity), 0);
             const remainingQuantity = batches.reduce((sum, batch) => sum + Number(batch.remaining_quantity), 0);
-            const unitValue = Number(asset.asset_value) || 0;
+            // Calculate weighted average unit value from batches, or fallback to asset_value
+            // This represents the average purchase price per unit across all batches
+            // Formula: (Sum of all batch values) / (Sum of all batch quantities)
+            let unitValue = Number(asset.asset_value) || 0;
+            if (batches.length > 0 && totalQuantity > 0) {
+                unitValue = totalBatchValue / totalQuantity;
+            }
             return {
                 ...asset,
                 asset_value: unitValue,
@@ -166,7 +177,7 @@ function registerRoutes(app) {
             return { error: deleteError };
         if (assignments.length === 0)
             return { error: null };
-        // Create assignments and allocate from batches
+        // Create assignments and allocate from specified batches
         const assignmentRows = assignments.map((assignment) => ({
             asset_id: assetId,
             pump_id: assignment.pump_id,
@@ -178,22 +189,65 @@ function registerRoutes(app) {
             .select("id, quantity");
         if (insertError)
             return { error: insertError };
-        // Allocate from batches for each assignment
+        // Allocate from specified batches for each assignment
         for (let i = 0; i < insertedAssignments.length; i++) {
             const assignment = insertedAssignments[i];
+            const assignmentInput = assignments[i];
             const requiredQty = assignment.quantity;
-            const allocations = await allocateFromBatches(assetId, requiredQty);
-            if (!allocations) {
-                // Rollback: delete created assignments
-                await supabaseClient_1.supabase
-                    .from("asset_assignments")
-                    .delete()
-                    .in("id", insertedAssignments.map((a) => a.id));
-                return {
-                    error: {
-                        message: `Insufficient stock. Cannot allocate ${requiredQty} units.`,
-                    },
-                };
+            // If batch_id is specified, use that batch; otherwise use FIFO
+            let allocations;
+            if (assignmentInput.batch_id) {
+                // Check if the specified batch has enough quantity
+                const { data: batch, error: batchError } = await supabaseClient_1.supabase
+                    .from("asset_purchase_batches")
+                    .select("remaining_quantity, purchase_price")
+                    .eq("id", assignmentInput.batch_id)
+                    .eq("asset_id", assetId)
+                    .maybeSingle();
+                if (batchError || !batch) {
+                    // Rollback: delete created assignments
+                    await supabaseClient_1.supabase
+                        .from("asset_assignments")
+                        .delete()
+                        .in("id", insertedAssignments.map((a) => a.id));
+                    return {
+                        error: {
+                            message: `Batch not found or invalid.`,
+                        },
+                    };
+                }
+                if (batch.remaining_quantity < requiredQty) {
+                    // Rollback: delete created assignments
+                    await supabaseClient_1.supabase
+                        .from("asset_assignments")
+                        .delete()
+                        .in("id", insertedAssignments.map((a) => a.id));
+                    return {
+                        error: {
+                            message: `Insufficient stock in selected batch. Only ${batch.remaining_quantity} units available.`,
+                        },
+                    };
+                }
+                allocations = [{
+                        batch_id: assignmentInput.batch_id,
+                        quantity: requiredQty,
+                    }];
+            }
+            else {
+                // Fallback to FIFO if no batch specified
+                allocations = await allocateFromBatches(assetId, requiredQty);
+                if (!allocations) {
+                    // Rollback: delete created assignments
+                    await supabaseClient_1.supabase
+                        .from("asset_assignments")
+                        .delete()
+                        .in("id", insertedAssignments.map((a) => a.id));
+                    return {
+                        error: {
+                            message: `Insufficient stock. Cannot allocate ${requiredQty} units.`,
+                        },
+                    };
+                }
             }
             await createBatchAllocations(assignment.id, allocations);
         }
@@ -233,7 +287,7 @@ function registerRoutes(app) {
         return { ok: true, error: null };
     };
     // ========== BATCH FUNCTIONS ==========
-    const createPurchaseBatch = async (assetId, purchasePrice, quantity, purchaseDate) => {
+    const createPurchaseBatch = async (assetId, purchasePrice, quantity, purchaseDate, remarks) => {
         const { data, error } = await supabaseClient_1.supabase
             .from("asset_purchase_batches")
             .insert([
@@ -243,6 +297,7 @@ function registerRoutes(app) {
                 quantity: quantity,
                 remaining_quantity: quantity,
                 purchase_date: purchaseDate || new Date().toISOString(),
+                remarks: remarks || null,
             },
         ])
             .select("*")
@@ -311,15 +366,31 @@ function registerRoutes(app) {
         const token = jsonwebtoken_1.default.sign({ userId: user.id }, JWT_SECRET, {
             expiresIn: "7d",
         });
-        res.cookie(TOKEN_COOKIE_NAME, token, {
+        // Set cookie with proper settings
+        const cookieOptions = {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production", // must be https in prod
-            sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-            domain: process.env.NODE_ENV === "production" ? ".azharalibuttar.com" : undefined, // Only set domain in production
             maxAge: TOKEN_MAX_AGE,
             path: "/",
-        });
-        return res.json({ ok: true });
+        };
+        // Determine if we're in production based on origin
+        const origin = req.headers.origin || "";
+        const isProduction = origin.includes("azharalibuttar.com") || process.env.NODE_ENV === "production";
+        if (isProduction) {
+            cookieOptions.secure = true;
+            cookieOptions.sameSite = "none";
+            // Set domain for production
+            if (origin.includes("azharalibuttar.com")) {
+                cookieOptions.domain = ".azharalibuttar.com";
+            }
+        }
+        else {
+            cookieOptions.secure = false;
+            cookieOptions.sameSite = "lax";
+            // Don't set domain in development - let browser handle it
+        }
+        res.cookie(TOKEN_COOKIE_NAME, token, cookieOptions);
+        // Also return token in response body for localStorage fallback
+        return res.json({ ok: true, token });
     });
     app.post("/api/logout", (_req, res) => {
         res.clearCookie(TOKEN_COOKIE_NAME, {
@@ -332,7 +403,15 @@ function registerRoutes(app) {
         res.json({ ok: true });
     });
     app.get("/api/me", async (req, res) => {
-        const token = req.cookies?.[TOKEN_COOKIE_NAME];
+        // Try to get token from cookie first
+        let token = req.cookies?.[TOKEN_COOKIE_NAME];
+        // If no cookie token, try Authorization header (for localStorage fallback)
+        if (!token) {
+            const authHeader = req.headers.authorization;
+            if (authHeader && authHeader.startsWith("Bearer ")) {
+                token = authHeader.substring(7);
+            }
+        }
         if (!token) {
             return res.status(200).json({ authenticated: false });
         }
@@ -533,13 +612,9 @@ function registerRoutes(app) {
             const asset_number = b.asset_number ?? b.assetNumber ?? null;
             const serial_number = b.serial_number ?? b.serialNumber ?? null;
             const barcode = b.barcode ?? null;
-            const quantity = b.quantity == null ? null : Number.isNaN(Number(b.quantity)) ? null : Number(b.quantity);
             const units = b.units ?? null;
-            const remarks = b.remarks ?? null;
             const category_id = b.category_id ?? b.categoryId ?? null;
-            const asset_value = b.asset_value ? Number(b.asset_value) : 0;
-            const purchase_price = b.purchase_price ? Number(b.purchase_price) : asset_value;
-            const purchase_date = b.purchase_date || new Date().toISOString();
+            const asset_value = 0; // Default value, not used anymore
             const assignments = sanitizeAssignments(b.assignments);
             const { data, error } = await supabaseClient_1.supabase
                 .from("assets")
@@ -549,9 +624,9 @@ function registerRoutes(app) {
                     asset_number,
                     serial_number,
                     barcode,
-                    quantity,
+                    quantity: null, // Quantity is now managed through batches
                     units,
-                    remarks,
+                    remarks: null, // Remarks are now in batches
                     category_id,
                     asset_value,
                 },
@@ -562,16 +637,11 @@ function registerRoutes(app) {
                 return res.status(400).json({ message: "DB insert error", error });
             if (!data)
                 return res.status(500).json({ message: "Asset insert failed" });
-            // Create purchase batch if price and quantity provided
-            if (purchase_price > 0 && quantity && quantity > 0) {
-                const { error: batchError } = await createPurchaseBatch(data.id, purchase_price, quantity, purchase_date ? new Date(purchase_date) : undefined);
-                if (batchError) {
-                    await supabaseClient_1.supabase.from("assets").delete().eq("id", data.id);
-                    return res.status(500).json({ message: batchError.message });
-                }
-            }
+            // Note: Purchase batches are now created separately through the batches endpoint
+            // This endpoint no longer creates batches automatically
             if (assignments.length > 0) {
-                const capacityCheck = await ensureCapacity(data.id, quantity ?? 0, assignments);
+                const capacityCheck = await ensureCapacity(data.id, null, // Quantity is now managed through batches
+                assignments);
                 if (!capacityCheck.ok) {
                     await supabaseClient_1.supabase.from("assets").delete().eq("id", data.id);
                     return res
@@ -894,7 +964,7 @@ function registerRoutes(app) {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
                 return res.status(400).json({ message: "Invalid asset ID" });
-            const { purchase_price, quantity, purchase_date } = req.body;
+            const { purchase_price, quantity, purchase_date, remarks } = req.body;
             if (!purchase_price || purchase_price <= 0)
                 return res.status(400).json({ message: "Purchase price required" });
             if (!quantity || quantity <= 0)
@@ -914,7 +984,7 @@ function registerRoutes(app) {
                 .update({ quantity: newQuantity })
                 .eq("id", id);
             // Create batch
-            const { data: batch, error: batchError } = await createPurchaseBatch(id, Number(purchase_price), Number(quantity), purchase_date ? new Date(purchase_date) : undefined);
+            const { data: batch, error: batchError } = await createPurchaseBatch(id, Number(purchase_price), Number(quantity), purchase_date ? new Date(purchase_date) : undefined, remarks || null);
             if (batchError)
                 return res.status(500).json({ message: batchError.message });
             return res.status(201).json(batch);
