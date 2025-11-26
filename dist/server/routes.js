@@ -913,4 +913,92 @@ function registerRoutes(app) {
             return res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
+    // Update batch
+    app.put("/api/assets/:assetId/batches/:batchId", async (req, res) => {
+        try {
+            const assetId = Number(req.params.assetId);
+            const batchId = Number(req.params.batchId);
+            if (Number.isNaN(assetId) || Number.isNaN(batchId))
+                return res.status(400).json({ message: "Invalid IDs" });
+            const { purchase_price, purchase_date } = req.body;
+            if (purchase_price != null && purchase_price <= 0)
+                return res.status(400).json({ message: "Purchase price must be greater than 0" });
+            // Verify batch exists and belongs to asset
+            const { data: batch, error: batchError } = await supabaseClient_1.supabase
+                .from("asset_purchase_batches")
+                .select("*")
+                .eq("id", batchId)
+                .eq("asset_id", assetId)
+                .maybeSingle();
+            if (batchError || !batch)
+                return res.status(404).json({ message: "Batch not found" });
+            const updateData = {};
+            if (purchase_price != null)
+                updateData.purchase_price = Number(purchase_price);
+            if (purchase_date)
+                updateData.purchase_date = new Date(purchase_date).toISOString();
+            if (Object.keys(updateData).length === 0)
+                return res.status(400).json({ message: "No fields to update" });
+            const { data: updated, error: updateError } = await supabaseClient_1.supabase
+                .from("asset_purchase_batches")
+                .update(updateData)
+                .eq("id", batchId)
+                .select("*")
+                .maybeSingle();
+            if (updateError)
+                return res.status(500).json({ message: updateError.message });
+            return res.json(updated);
+        }
+        catch (e) {
+            return res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    // Delete batch (only if not used)
+    app.delete("/api/assets/:assetId/batches/:batchId", async (req, res) => {
+        try {
+            const assetId = Number(req.params.assetId);
+            const batchId = Number(req.params.batchId);
+            if (Number.isNaN(assetId) || Number.isNaN(batchId))
+                return res.status(400).json({ message: "Invalid IDs" });
+            // Verify batch exists and belongs to asset
+            const { data: batch, error: batchError } = await supabaseClient_1.supabase
+                .from("asset_purchase_batches")
+                .select("quantity, remaining_quantity")
+                .eq("id", batchId)
+                .eq("asset_id", assetId)
+                .maybeSingle();
+            if (batchError || !batch)
+                return res.status(404).json({ message: "Batch not found" });
+            // Only allow deletion if batch hasn't been used
+            if (batch.remaining_quantity !== batch.quantity) {
+                return res.status(400).json({
+                    message: "Cannot delete batch that has been partially or fully assigned. Remaining quantity must equal total quantity.",
+                });
+            }
+            // Update asset quantity
+            const { data: asset } = await supabaseClient_1.supabase
+                .from("assets")
+                .select("quantity")
+                .eq("id", assetId)
+                .maybeSingle();
+            if (asset) {
+                const newQuantity = Math.max(0, (asset.quantity || 0) - batch.quantity);
+                await supabaseClient_1.supabase
+                    .from("assets")
+                    .update({ quantity: newQuantity })
+                    .eq("id", assetId);
+            }
+            // Delete batch
+            const { error: deleteError } = await supabaseClient_1.supabase
+                .from("asset_purchase_batches")
+                .delete()
+                .eq("id", batchId);
+            if (deleteError)
+                return res.status(500).json({ message: deleteError.message });
+            return res.status(204).send();
+        }
+        catch (e) {
+            return res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
 }
