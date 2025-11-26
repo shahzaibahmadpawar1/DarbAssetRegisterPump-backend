@@ -45,9 +45,19 @@ app.options("*", cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// Attach user from JWT cookie (optional convenience)
+// Attach user from JWT cookie or Authorization header (optional convenience)
 app.use((req: any, _res, next) => {
-  const token = req.cookies?.token;
+  // Try cookie first
+  let token = req.cookies?.token;
+  
+  // If no cookie, try Authorization header
+  if (!token) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.substring(7);
+    }
+  }
+  
   if (token) {
     try { req.user = jwt.verify(token, JWT_SECRET); } catch { /* ignore */ }
   }

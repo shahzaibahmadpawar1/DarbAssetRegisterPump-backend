@@ -9,24 +9,26 @@ export function registerRoutes(app: Express) {
   const TOKEN_COOKIE_NAME = "token";
   const TOKEN_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-  type AssignmentInput = { pump_id: number; quantity: number };
+  type AssignmentInput = { pump_id: number; quantity: number; batch_id?: number };
 
   const sanitizeAssignments = (input: any): AssignmentInput[] => {
     if (!Array.isArray(input)) return [];
-    const merged = new Map<number, number>();
-
+    // Don't merge when batch_id is specified - each assignment needs its own batch
+    const result: AssignmentInput[] = [];
     input.forEach((item) => {
       const pumpId = Number(item?.pump_id);
       const qty = Number(item?.quantity);
+      const batchId = item?.batch_id ? Number(item.batch_id) : undefined;
       if (!Number.isFinite(pumpId) || pumpId <= 0) return;
       if (!Number.isFinite(qty) || qty <= 0) return;
-      merged.set(pumpId, (merged.get(pumpId) || 0) + qty);
+      if (batchId !== undefined && (!Number.isFinite(batchId) || batchId <= 0)) return;
+      result.push({
+        pump_id: pumpId,
+        quantity: qty,
+        batch_id: batchId,
+      });
     });
-
-    return Array.from(merged.entries()).map(([pump_id, quantity]) => ({
-      pump_id,
-      quantity,
-    }));
+    return result;
   };
 
   const sumAssignmentQuantity = (assignments: AssignmentInput[]) =>
@@ -148,7 +150,13 @@ export function registerRoutes(app: Express) {
         0
       );
 
-      const unitValue = Number(asset.asset_value) || 0;
+      // Calculate weighted average unit value from batches, or fallback to asset_value
+      // This represents the average purchase price per unit across all batches
+      // Formula: (Sum of all batch values) / (Sum of all batch quantities)
+      let unitValue = Number(asset.asset_value) || 0;
+      if (batches.length > 0 && totalQuantity > 0) {
+        unitValue = totalBatchValue / totalQuantity;
+      }
 
       return {
         ...asset,
@@ -215,7 +223,7 @@ export function registerRoutes(app: Express) {
     if (deleteError) return { error: deleteError };
     if (assignments.length === 0) return { error: null };
 
-    // Create assignments and allocate from batches
+    // Create assignments and allocate from specified batches
     const assignmentRows = assignments.map((assignment) => ({
       asset_id: assetId,
       pump_id: assignment.pump_id,
@@ -228,23 +236,68 @@ export function registerRoutes(app: Express) {
       .select("id, quantity");
     if (insertError) return { error: insertError };
 
-    // Allocate from batches for each assignment
+    // Allocate from specified batches for each assignment
     for (let i = 0; i < insertedAssignments.length; i++) {
       const assignment = insertedAssignments[i];
+      const assignmentInput = assignments[i];
       const requiredQty = assignment.quantity;
-      const allocations = await allocateFromBatches(assetId, requiredQty);
-
-      if (!allocations) {
-        // Rollback: delete created assignments
-        await supabase
-          .from("asset_assignments")
-          .delete()
-          .in("id", insertedAssignments.map((a: any) => a.id));
-        return {
-          error: {
-            message: `Insufficient stock. Cannot allocate ${requiredQty} units.`,
-          },
-        };
+      
+      // If batch_id is specified, use that batch; otherwise use FIFO
+      let allocations;
+      if (assignmentInput.batch_id) {
+        // Check if the specified batch has enough quantity
+        const { data: batch, error: batchError } = await supabase
+          .from("asset_purchase_batches")
+          .select("remaining_quantity, purchase_price")
+          .eq("id", assignmentInput.batch_id)
+          .eq("asset_id", assetId)
+          .maybeSingle();
+        
+        if (batchError || !batch) {
+          // Rollback: delete created assignments
+          await supabase
+            .from("asset_assignments")
+            .delete()
+            .in("id", insertedAssignments.map((a: any) => a.id));
+          return {
+            error: {
+              message: `Batch not found or invalid.`,
+            },
+          };
+        }
+        
+        if (batch.remaining_quantity < requiredQty) {
+          // Rollback: delete created assignments
+          await supabase
+            .from("asset_assignments")
+            .delete()
+            .in("id", insertedAssignments.map((a: any) => a.id));
+          return {
+            error: {
+              message: `Insufficient stock in selected batch. Only ${batch.remaining_quantity} units available.`,
+            },
+          };
+        }
+        
+        allocations = [{
+          batch_id: assignmentInput.batch_id,
+          quantity: requiredQty,
+        }];
+      } else {
+        // Fallback to FIFO if no batch specified
+        allocations = await allocateFromBatches(assetId, requiredQty);
+        if (!allocations) {
+          // Rollback: delete created assignments
+          await supabase
+            .from("asset_assignments")
+            .delete()
+            .in("id", insertedAssignments.map((a: any) => a.id));
+          return {
+            error: {
+              message: `Insufficient stock. Cannot allocate ${requiredQty} units.`,
+            },
+          };
+        }
       }
 
       await createBatchAllocations(assignment.id, allocations);
@@ -406,17 +459,34 @@ export function registerRoutes(app: Express) {
       expiresIn: "7d",
     });
 
-    res.cookie(TOKEN_COOKIE_NAME, token, {
+    // Set cookie with proper settings
+    const cookieOptions: any = {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",       // must be https in prod
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      domain: process.env.NODE_ENV === "production" ? ".azharalibuttar.com" : undefined,  // Only set domain in production
       maxAge: TOKEN_MAX_AGE,
       path: "/",
-    });
+    };
 
+    // Determine if we're in production based on origin
+    const origin = req.headers.origin || "";
+    const isProduction = origin.includes("azharalibuttar.com") || process.env.NODE_ENV === "production";
+    
+    if (isProduction) {
+      cookieOptions.secure = true;
+      cookieOptions.sameSite = "none";
+      // Set domain for production
+      if (origin.includes("azharalibuttar.com")) {
+        cookieOptions.domain = ".azharalibuttar.com";
+      }
+    } else {
+      cookieOptions.secure = false;
+      cookieOptions.sameSite = "lax";
+      // Don't set domain in development - let browser handle it
+    }
 
-    return res.json({ ok: true });
+    res.cookie(TOKEN_COOKIE_NAME, token, cookieOptions);
+
+    // Also return token in response body for localStorage fallback
+    return res.json({ ok: true, token });
   });
 
   app.post("/api/logout", (_req, res) => {
@@ -431,7 +501,17 @@ export function registerRoutes(app: Express) {
   });
 
   app.get("/api/me", async (req: Request, res: Response) => {
-    const token = (req as any).cookies?.[TOKEN_COOKIE_NAME];
+    // Try to get token from cookie first
+    let token = (req as any).cookies?.[TOKEN_COOKIE_NAME];
+    
+    // If no cookie token, try Authorization header (for localStorage fallback)
+    if (!token) {
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        token = authHeader.substring(7);
+      }
+    }
+
     if (!token) {
       return res.status(200).json({ authenticated: false });
     }
