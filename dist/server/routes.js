@@ -801,6 +801,23 @@ function registerRoutes(app) {
                 .json({ message: e?.message || "Internal error updating asset" });
         }
     });
+    // DELETE ASSET
+    app.delete("/api/assets/:id", async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            if (Number.isNaN(id))
+                return res.status(400).json({ message: "Invalid ID" });
+            // DB schema has ON DELETE CASCADE, so this automatically 
+            // removes related assignments and batches.
+            const { error } = await supabaseClient_1.supabase.from("assets").delete().eq("id", id);
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.status(204).send();
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
     // ASSIGN
     app.put("/api/assets/:id/assign", async (req, res) => {
         try {
