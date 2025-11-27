@@ -13,7 +13,7 @@ function registerRoutes(app) {
     const sanitizeAssignments = (input) => {
         if (!Array.isArray(input))
             return [];
-        // Don't merge when batch_id is specified - each assignment needs its own batch
+        // Keep rows as-is; grouping per pump happens server-side so we can track batch preferences
         const result = [];
         input.forEach((item) => {
             const pumpId = Number(item?.pump_id);
@@ -178,78 +178,109 @@ function registerRoutes(app) {
         if (assignments.length === 0)
             return { error: null };
         // Create assignments and allocate from specified batches
-        const assignmentRows = assignments.map((assignment) => ({
+        const groupedAssignments = Array.from(assignments.reduce((map, assignment) => {
+            const existing = map.get(assignment.pump_id) || {
+                pump_id: assignment.pump_id,
+                totalQuantity: 0,
+                manualByBatch: new Map(),
+                autoQuantity: 0,
+            };
+            existing.totalQuantity += assignment.quantity;
+            if (assignment.batch_id) {
+                existing.manualByBatch.set(assignment.batch_id, (existing.manualByBatch.get(assignment.batch_id) || 0) + assignment.quantity);
+            }
+            else {
+                existing.autoQuantity += assignment.quantity;
+            }
+            map.set(assignment.pump_id, existing);
+            return map;
+        }, new Map())).map((entry) => entry[1]);
+        const assignmentRows = groupedAssignments.map((group) => ({
             asset_id: assetId,
-            pump_id: assignment.pump_id,
-            quantity: assignment.quantity,
+            pump_id: group.pump_id,
+            quantity: group.totalQuantity,
         }));
         const { data: insertedAssignments, error: insertError } = await supabaseClient_1.supabase
             .from("asset_assignments")
             .insert(assignmentRows)
-            .select("id, quantity");
+            .select("id, pump_id, quantity");
         if (insertError)
             return { error: insertError };
+        const deleteInsertedAssignments = async () => {
+            if (insertedAssignments && insertedAssignments.length > 0) {
+                await supabaseClient_1.supabase
+                    .from("asset_assignments")
+                    .delete()
+                    .in("id", insertedAssignments.map((a) => a.id));
+            }
+        };
+        const insertedByPump = new Map();
+        insertedAssignments?.forEach((row) => {
+            insertedByPump.set(row.pump_id, row);
+        });
         // Allocate from specified batches for each assignment
-        for (let i = 0; i < insertedAssignments.length; i++) {
-            const assignment = insertedAssignments[i];
-            const assignmentInput = assignments[i];
-            const requiredQty = assignment.quantity;
-            // If batch_id is specified, use that batch; otherwise use FIFO
-            let allocations;
-            if (assignmentInput.batch_id) {
-                // Check if the specified batch has enough quantity
+        for (const group of groupedAssignments) {
+            const assignmentRow = insertedByPump.get(group.pump_id);
+            if (!assignmentRow)
+                continue;
+            const manualAllocations = [];
+            for (const [batchId, qty] of group.manualByBatch.entries()) {
                 const { data: batch, error: batchError } = await supabaseClient_1.supabase
                     .from("asset_purchase_batches")
-                    .select("remaining_quantity, purchase_price")
-                    .eq("id", assignmentInput.batch_id)
+                    .select("remaining_quantity")
+                    .eq("id", batchId)
                     .eq("asset_id", assetId)
                     .maybeSingle();
                 if (batchError || !batch) {
-                    // Rollback: delete created assignments
-                    await supabaseClient_1.supabase
-                        .from("asset_assignments")
-                        .delete()
-                        .in("id", insertedAssignments.map((a) => a.id));
+                    await deleteInsertedAssignments();
                     return {
                         error: {
                             message: `Batch not found or invalid.`,
                         },
                     };
                 }
-                if (batch.remaining_quantity < requiredQty) {
-                    // Rollback: delete created assignments
-                    await supabaseClient_1.supabase
-                        .from("asset_assignments")
-                        .delete()
-                        .in("id", insertedAssignments.map((a) => a.id));
+                if (batch.remaining_quantity < qty) {
+                    await deleteInsertedAssignments();
                     return {
                         error: {
                             message: `Insufficient stock in selected batch. Only ${batch.remaining_quantity} units available.`,
                         },
                     };
                 }
-                allocations = [{
-                        batch_id: assignmentInput.batch_id,
-                        quantity: requiredQty,
-                    }];
+                manualAllocations.push({ batch_id: batchId, quantity: qty });
             }
-            else {
-                // Fallback to FIFO if no batch specified
-                allocations = await allocateFromBatches(assetId, requiredQty);
-                if (!allocations) {
-                    // Rollback: delete created assignments
-                    await supabaseClient_1.supabase
-                        .from("asset_assignments")
-                        .delete()
-                        .in("id", insertedAssignments.map((a) => a.id));
+            const manualTotal = manualAllocations.reduce((sum, alloc) => sum + alloc.quantity, 0);
+            if (manualTotal > assignmentRow.quantity) {
+                await deleteInsertedAssignments();
+                return {
+                    error: {
+                        message: "Manual batch allocations exceed the requested quantity.",
+                    },
+                };
+            }
+            const remainingQty = assignmentRow.quantity - manualTotal;
+            let allocations = [...manualAllocations];
+            if (remainingQty > 0) {
+                const autoAllocations = await allocateFromBatches(assetId, remainingQty);
+                if (!autoAllocations) {
+                    await deleteInsertedAssignments();
                     return {
                         error: {
-                            message: `Insufficient stock. Cannot allocate ${requiredQty} units.`,
+                            message: `Insufficient stock. Cannot allocate ${remainingQty} units.`,
                         },
                     };
                 }
+                allocations = allocations.concat(autoAllocations);
             }
-            await createBatchAllocations(assignment.id, allocations);
+            if (allocations.length === 0) {
+                await deleteInsertedAssignments();
+                return {
+                    error: {
+                        message: "No valid batch allocations were provided.",
+                    },
+                };
+            }
+            await createBatchAllocations(assignmentRow.id, allocations);
         }
         return { error: null };
     };
@@ -472,12 +503,16 @@ function registerRoutes(app) {
         }
     });
     app.post("/api/pumps", async (req, res) => {
-        const { name, location, manager } = req.body;
+        const name = req.body?.name;
+        const location = req.body?.location;
+        const manager = req.body?.manager;
+        const contact_number = req.body?.contact_number ?? req.body?.contactNumber ?? null;
+        const remarks = req.body?.remarks ?? req.body?.details ?? null;
         if (!name || !location || !manager)
             return res.status(400).json({ message: "Missing fields" });
         const { data, error } = await supabaseClient_1.supabase
             .from("pumps")
-            .insert([{ name, location, manager }])
+            .insert([{ name, location, manager, contact_number, remarks }])
             .select("*")
             .maybeSingle();
         if (error)
@@ -486,7 +521,20 @@ function registerRoutes(app) {
     });
     app.put("/api/pumps/:id", async (req, res) => {
         const id = Number(req.params.id);
-        const payload = req.body;
+        const body = req.body || {};
+        const payload = {};
+        if ("name" in body)
+            payload.name = body.name;
+        if ("location" in body)
+            payload.location = body.location;
+        if ("manager" in body)
+            payload.manager = body.manager;
+        if ("contact_number" in body || "contactNumber" in body)
+            payload.contact_number = body.contact_number ?? body.contactNumber ?? null;
+        if ("remarks" in body || "details" in body)
+            payload.remarks = body.remarks ?? body.details ?? null;
+        if (Object.keys(payload).length === 0)
+            return res.status(400).json({ message: "No fields to update" });
         const { data, error } = await supabaseClient_1.supabase
             .from("pumps")
             .update(payload)
