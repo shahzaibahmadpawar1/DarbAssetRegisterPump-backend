@@ -287,7 +287,7 @@ function registerRoutes(app) {
         return { ok: true, error: null };
     };
     // ========== BATCH FUNCTIONS ==========
-    const createPurchaseBatch = async (assetId, purchasePrice, quantity, purchaseDate, remarks, serialNumber) => {
+    const createPurchaseBatch = async (assetId, purchasePrice, quantity, purchaseDate, remarks, serialNumber, barcode) => {
         const { data, error } = await supabaseClient_1.supabase
             .from("asset_purchase_batches")
             .insert([
@@ -299,6 +299,7 @@ function registerRoutes(app) {
                 purchase_date: purchaseDate || new Date().toISOString(),
                 remarks: remarks || null,
                 serial_number: serialNumber ?? null,
+                barcode: barcode ?? null,
             },
         ])
             .select("*")
@@ -965,14 +966,17 @@ function registerRoutes(app) {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
                 return res.status(400).json({ message: "Invalid asset ID" });
-            const { purchase_price, quantity, purchase_date, remarks, serial_number } = req.body;
+            const { purchase_price, quantity, purchase_date, remarks, serial_number, barcode } = req.body;
             if (!purchase_price || purchase_price <= 0)
                 return res.status(400).json({ message: "Purchase price required" });
             if (!quantity || quantity <= 0)
                 return res.status(400).json({ message: "Quantity required" });
             if (!serial_number || typeof serial_number !== "string" || !serial_number.trim())
                 return res.status(400).json({ message: "Serial number required" });
+            if (!barcode || typeof barcode !== "string" || !barcode.trim())
+                return res.status(400).json({ message: "Barcode required" });
             const normalizedSerial = serial_number.trim();
+            const normalizedBarcode = barcode.trim();
             // Verify asset exists
             const { data: asset, error: assetError } = await supabaseClient_1.supabase
                 .from("assets")
@@ -988,12 +992,12 @@ function registerRoutes(app) {
                 .update({ quantity: newQuantity })
                 .eq("id", id);
             // Create batch
-            const { data: batch, error: batchError } = await createPurchaseBatch(id, Number(purchase_price), Number(quantity), purchase_date ? new Date(purchase_date) : undefined, remarks || null, normalizedSerial);
+            const { data: batch, error: batchError } = await createPurchaseBatch(id, Number(purchase_price), Number(quantity), purchase_date ? new Date(purchase_date) : undefined, remarks || null, normalizedSerial, normalizedBarcode);
             if (batchError)
                 return res.status(500).json({ message: batchError.message });
             await supabaseClient_1.supabase
                 .from("assets")
-                .update({ serial_number: normalizedSerial })
+                .update({ serial_number: normalizedSerial, barcode: normalizedBarcode })
                 .eq("id", id);
             return res.status(201).json(batch);
         }
@@ -1008,7 +1012,7 @@ function registerRoutes(app) {
             const batchId = Number(req.params.batchId);
             if (Number.isNaN(assetId) || Number.isNaN(batchId))
                 return res.status(400).json({ message: "Invalid IDs" });
-            const { purchase_price, purchase_date, serial_number } = req.body;
+            const { purchase_price, purchase_date, serial_number, barcode } = req.body;
             if (purchase_price != null && purchase_price <= 0)
                 return res.status(400).json({ message: "Purchase price must be greater than 0" });
             // Verify batch exists and belongs to asset
@@ -1031,6 +1035,12 @@ function registerRoutes(app) {
                 }
                 updateData.serial_number = serial_number.trim();
             }
+            if (barcode != null) {
+                if (typeof barcode !== "string" || !barcode.trim()) {
+                    return res.status(400).json({ message: "Barcode cannot be empty" });
+                }
+                updateData.barcode = barcode.trim();
+            }
             if (Object.keys(updateData).length === 0)
                 return res.status(400).json({ message: "No fields to update" });
             const { data: updated, error: updateError } = await supabaseClient_1.supabase
@@ -1041,10 +1051,13 @@ function registerRoutes(app) {
                 .maybeSingle();
             if (updateError)
                 return res.status(500).json({ message: updateError.message });
-            if (updateData.serial_number) {
+            if (updateData.serial_number || updateData.barcode) {
                 await supabaseClient_1.supabase
                     .from("assets")
-                    .update({ serial_number: updateData.serial_number })
+                    .update({
+                    ...(updateData.serial_number ? { serial_number: updateData.serial_number } : {}),
+                    ...(updateData.barcode ? { barcode: updateData.barcode } : {}),
+                })
                     .eq("id", assetId);
             }
             return res.json(updated);
