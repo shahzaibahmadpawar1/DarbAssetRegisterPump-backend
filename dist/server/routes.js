@@ -318,7 +318,7 @@ function registerRoutes(app) {
         return { ok: true, error: null };
     };
     // ========== BATCH FUNCTIONS ==========
-    const createPurchaseBatch = async (assetId, purchasePrice, quantity, purchaseDate, remarks, serialNumber, barcode) => {
+    const createPurchaseBatch = async (assetId, purchasePrice, quantity, purchaseDate, remarks, serialNumber, barcode, batchName) => {
         const { data, error } = await supabaseClient_1.supabase
             .from("asset_purchase_batches")
             .insert([
@@ -331,6 +331,7 @@ function registerRoutes(app) {
                 remarks: remarks || null,
                 serial_number: serialNumber ?? null,
                 barcode: barcode ?? null,
+                batch_name: batchName || null,
             },
         ])
             .select("*")
@@ -606,6 +607,170 @@ function registerRoutes(app) {
         if (error)
             return res.status(500).json({ message: error.message });
         res.status(204).send();
+    });
+    // ---------------- EMPLOYEES ----------------
+    app.get("/api/employees", async (_req, res) => {
+        try {
+            const { data, error } = await supabaseClient_1.supabase
+                .from("employees")
+                .select("*")
+                .order("name", { ascending: true });
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.json(data || []);
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    app.post("/api/employees", async (req, res) => {
+        try {
+            const { name, employee_id } = req.body;
+            if (!name || typeof name !== "string" || !name.trim())
+                return res.status(400).json({ message: "Employee name is required" });
+            const { data, error } = await supabaseClient_1.supabase
+                .from("employees")
+                .insert([{ name: name.trim(), employee_id: employee_id?.trim() || null }])
+                .select("*")
+                .maybeSingle();
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.json(data);
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    app.put("/api/employees/:id", async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            if (Number.isNaN(id))
+                return res.status(400).json({ message: "Invalid employee ID" });
+            const { name, employee_id } = req.body;
+            const updateData = {};
+            if (name !== undefined)
+                updateData.name = name?.trim() || null;
+            if (employee_id !== undefined)
+                updateData.employee_id = employee_id?.trim() || null;
+            const { data, error } = await supabaseClient_1.supabase
+                .from("employees")
+                .update(updateData)
+                .eq("id", id)
+                .select("*")
+                .maybeSingle();
+            if (error)
+                return res.status(500).json({ message: error.message });
+            if (!data)
+                return res.status(404).json({ message: "Employee not found" });
+            res.json(data);
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    app.delete("/api/employees/:id", async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            if (Number.isNaN(id))
+                return res.status(400).json({ message: "Invalid employee ID" });
+            const { error } = await supabaseClient_1.supabase.from("employees").delete().eq("id", id);
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.json({ ok: true });
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    // Employee Asset Assignments
+    app.get("/api/employees/:id/assignments", async (req, res) => {
+        try {
+            const employeeId = Number(req.params.id);
+            if (Number.isNaN(employeeId))
+                return res.status(400).json({ message: "Invalid employee ID" });
+            const { data, error } = await supabaseClient_1.supabase
+                .from("employee_asset_assignments")
+                .select(`
+          *,
+          batch:asset_purchase_batches(
+            id,
+            purchase_date,
+            purchase_price,
+            asset:assets(id, asset_name, asset_number)
+          )
+        `)
+                .eq("employee_id", employeeId)
+                .order("assignment_date", { ascending: false });
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.json(data || []);
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    app.post("/api/employees/:id/assignments", async (req, res) => {
+        try {
+            const employeeId = Number(req.params.id);
+            if (Number.isNaN(employeeId))
+                return res.status(400).json({ message: "Invalid employee ID" });
+            const { batch_id, quantity, assignment_date } = req.body;
+            if (!batch_id || !quantity || quantity <= 0)
+                return res.status(400).json({ message: "batch_id and quantity (positive) are required" });
+            // Check batch exists and has enough remaining quantity
+            const { data: batch, error: batchError } = await supabaseClient_1.supabase
+                .from("asset_purchase_batches")
+                .select("remaining_quantity")
+                .eq("id", batch_id)
+                .maybeSingle();
+            if (batchError || !batch)
+                return res.status(404).json({ message: "Batch not found" });
+            if (batch.remaining_quantity < quantity)
+                return res.status(400).json({
+                    message: `Insufficient quantity. Only ${batch.remaining_quantity} available in this batch.`
+                });
+            const { data, error } = await supabaseClient_1.supabase
+                .from("employee_asset_assignments")
+                .insert([{
+                    employee_id: employeeId,
+                    batch_id: batch_id,
+                    quantity: quantity,
+                    assignment_date: assignment_date ? new Date(assignment_date).toISOString() : new Date().toISOString(),
+                }])
+                .select(`
+          *,
+          batch:asset_purchase_batches(
+            id,
+            purchase_date,
+            purchase_price,
+            asset:assets(id, asset_name, asset_number)
+          )
+        `)
+                .maybeSingle();
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.json(data);
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    app.delete("/api/employees/:employeeId/assignments/:assignmentId", async (req, res) => {
+        try {
+            const assignmentId = Number(req.params.assignmentId);
+            if (Number.isNaN(assignmentId))
+                return res.status(400).json({ message: "Invalid assignment ID" });
+            const { error } = await supabaseClient_1.supabase
+                .from("employee_asset_assignments")
+                .delete()
+                .eq("id", assignmentId);
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.json({ ok: true });
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
     });
     // ---------------- ASSETS ----------------
     app.get("/api/assets", async (req, res) => {
@@ -891,7 +1056,7 @@ function registerRoutes(app) {
     // REPORTS
     app.get("/api/reports/assets-by-category", async (req, res) => {
         try {
-            const { pump_id, category_id } = req.query;
+            const { pump_id, category_id, employee_id } = req.query;
             const pumpIdParam = pump_id ?? "";
             const parsedPumpId = pumpIdParam &&
                 pumpIdParam !== "all" &&
@@ -901,6 +1066,16 @@ function registerRoutes(app) {
                 : null;
             const pumpFilter = parsedPumpId != null && !Number.isNaN(parsedPumpId) ? parsedPumpId : null;
             const hasPumpFilter = pumpFilter != null;
+            // Parse employee filter
+            const employeeIdParam = employee_id ?? "";
+            const parsedEmployeeId = employeeIdParam &&
+                employeeIdParam !== "all" &&
+                employeeIdParam !== "null" &&
+                employeeIdParam !== "undefined"
+                ? Number(employeeIdParam)
+                : null;
+            const employeeFilter = parsedEmployeeId != null && !Number.isNaN(parsedEmployeeId) ? parsedEmployeeId : null;
+            const hasEmployeeFilter = employeeFilter != null;
             let filteredAssetIds = null;
             // 1. Pre-filter assets IDs if a station is selected
             if (hasPumpFilter) {
@@ -911,6 +1086,36 @@ function registerRoutes(app) {
                 if (filterError)
                     return res.status(500).json({ message: filterError.message });
                 filteredAssetIds = Array.from(new Set((assignmentRows || []).map((row) => row.asset_id)));
+                if (filteredAssetIds.length === 0)
+                    return res.json([]);
+            }
+            // 1b. Pre-filter assets IDs if an employee is selected
+            if (hasEmployeeFilter) {
+                // Get batch IDs assigned to this employee
+                const { data: employeeAssignments, error: empError } = await supabaseClient_1.supabase
+                    .from("employee_asset_assignments")
+                    .select("batch_id")
+                    .eq("employee_id", employeeFilter);
+                if (empError)
+                    return res.status(500).json({ message: empError.message });
+                if (!employeeAssignments || employeeAssignments.length === 0)
+                    return res.json([]);
+                const batchIds = Array.from(new Set(employeeAssignments.map((a) => a.batch_id)));
+                // Get asset IDs from these batches
+                const { data: batchRows, error: batchError } = await supabaseClient_1.supabase
+                    .from("asset_purchase_batches")
+                    .select("asset_id")
+                    .in("id", batchIds);
+                if (batchError)
+                    return res.status(500).json({ message: batchError.message });
+                const employeeAssetIds = Array.from(new Set((batchRows || []).map((row) => row.asset_id)));
+                // Combine with existing filter if any
+                if (filteredAssetIds) {
+                    filteredAssetIds = filteredAssetIds.filter((id) => employeeAssetIds.includes(id));
+                }
+                else {
+                    filteredAssetIds = employeeAssetIds;
+                }
                 if (filteredAssetIds.length === 0)
                     return res.json([]);
             }
@@ -1031,7 +1236,7 @@ function registerRoutes(app) {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
                 return res.status(400).json({ message: "Invalid asset ID" });
-            const { purchase_price, quantity, purchase_date, remarks, serial_number, barcode } = req.body;
+            const { purchase_price, quantity, purchase_date, remarks, serial_number, barcode, batch_name } = req.body;
             if (!purchase_price || purchase_price <= 0)
                 return res.status(400).json({ message: "Purchase price required" });
             if (!quantity || quantity <= 0)
@@ -1042,6 +1247,7 @@ function registerRoutes(app) {
                 return res.status(400).json({ message: "Barcode required" });
             const normalizedSerial = serial_number.trim();
             const normalizedBarcode = barcode.trim();
+            const normalizedBatchName = batch_name?.trim() || null;
             // Verify asset exists
             const { data: asset, error: assetError } = await supabaseClient_1.supabase
                 .from("assets")
@@ -1077,7 +1283,7 @@ function registerRoutes(app) {
             const batchId = Number(req.params.batchId);
             if (Number.isNaN(assetId) || Number.isNaN(batchId))
                 return res.status(400).json({ message: "Invalid IDs" });
-            const { purchase_price, purchase_date, serial_number, barcode } = req.body;
+            const { purchase_price, purchase_date, serial_number, barcode, batch_name } = req.body;
             if (purchase_price != null && purchase_price <= 0)
                 return res.status(400).json({ message: "Purchase price must be greater than 0" });
             // Verify batch exists and belongs to asset
@@ -1105,6 +1311,9 @@ function registerRoutes(app) {
                     return res.status(400).json({ message: "Barcode cannot be empty" });
                 }
                 updateData.barcode = barcode.trim();
+            }
+            if (batch_name != null) {
+                updateData.batch_name = batch_name?.trim() || null;
             }
             if (Object.keys(updateData).length === 0)
                 return res.status(400).json({ message: "No fields to update" });
