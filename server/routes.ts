@@ -764,18 +764,36 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/employees", async (req, res) => {
     try {
-      const { name, employee_id } = req.body;
+      const { name, employee_id, department_id } = req.body;
       if (!name || typeof name !== "string" || !name.trim())
         return res.status(400).json({ message: "Employee name is required" });
 
-      const { data, error } = await supabase
+      const { data: employee, error: empError } = await supabase
         .from("employees")
         .insert([{ name: name.trim(), employee_id: employee_id?.trim() || null }])
         .select("*")
         .maybeSingle();
 
-      if (error) return res.status(500).json({ message: error.message });
-      res.json(data);
+      if (empError) return res.status(500).json({ message: empError.message });
+      if (!employee) return res.status(500).json({ message: "Failed to create employee" });
+
+      // If department_id is provided, assign employee to department
+      if (department_id) {
+        const { error: assignError } = await supabase
+          .from("employee_department_assignments")
+          .insert([{
+            employee_id: employee.id,
+            department_id: department_id,
+            assigned_at: new Date().toISOString(),
+          }]);
+
+        if (assignError) {
+          // If assignment fails, still return the employee but log the error
+          console.error("Failed to assign employee to department:", assignError);
+        }
+      }
+
+      res.json(employee);
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Internal error" });
     }
@@ -916,6 +934,202 @@ export function registerRoutes(app: Express) {
       res.status(500).json({ message: e?.message || "Internal error" });
     }
   });
+
+  // ---------------- DEPARTMENTS ----------------
+  app.get("/api/departments", async (_req, res) => {
+    try {
+      const { data: departments, error } = await supabase
+        .from("departments")
+        .select("*")
+        .order("name", { ascending: true });
+      if (error) return res.status(500).json({ message: error.message });
+      
+      // Get employee counts for each department
+      const departmentsWithCounts = await Promise.all(
+        (departments || []).map(async (dept: any) => {
+          const { count, error: countError } = await supabase
+            .from("employee_department_assignments")
+            .select("*", { count: "exact", head: true })
+            .eq("department_id", dept.id);
+          
+          return {
+            ...dept,
+            employeeCount: countError ? 0 : (count || 0),
+          };
+        })
+      );
+      
+      res.json(departmentsWithCounts);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
+  app.get("/api/departments/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (Number.isNaN(id))
+        return res.status(400).json({ message: "Invalid department ID" });
+
+      const { data, error } = await supabase
+        .from("departments")
+        .select(`
+          *,
+          employees:employee_department_assignments(
+            employee:employees(id, name, employee_id)
+          )
+        `)
+        .eq("id", id)
+        .maybeSingle();
+
+      if (error) return res.status(500).json({ message: error.message });
+      if (!data) return res.status(404).json({ message: "Department not found" });
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
+  app.post("/api/departments", async (req, res) => {
+    try {
+      const { name, manager } = req.body;
+      if (!name || typeof name !== "string" || !name.trim())
+        return res.status(400).json({ message: "Department name is required" });
+      if (!manager || typeof manager !== "string" || !manager.trim())
+        return res.status(400).json({ message: "Manager name is required" });
+
+      const { data, error } = await supabase
+        .from("departments")
+        .insert([{ name: name.trim(), manager: manager.trim() }])
+        .select("*")
+        .maybeSingle();
+
+      if (error) return res.status(500).json({ message: error.message });
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
+  app.put("/api/departments/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (Number.isNaN(id))
+        return res.status(400).json({ message: "Invalid department ID" });
+
+      const { name, manager } = req.body;
+      const updateData: any = {};
+      if (name !== undefined) updateData.name = name?.trim() || null;
+      if (manager !== undefined) updateData.manager = manager?.trim() || null;
+
+      if (Object.keys(updateData).length === 0)
+        return res.status(400).json({ message: "No fields to update" });
+
+      const { data, error } = await supabase
+        .from("departments")
+        .update(updateData)
+        .eq("id", id)
+        .select("*")
+        .maybeSingle();
+
+      if (error) return res.status(500).json({ message: error.message });
+      if (!data) return res.status(404).json({ message: "Department not found" });
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
+  app.delete("/api/departments/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (Number.isNaN(id))
+        return res.status(400).json({ message: "Invalid department ID" });
+
+      const { error } = await supabase.from("departments").delete().eq("id", id);
+      if (error) return res.status(500).json({ message: error.message });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
+  // Department Employee Assignments
+  app.get("/api/departments/:id/employees", async (req, res) => {
+    try {
+      const departmentId = Number(req.params.id);
+      if (Number.isNaN(departmentId))
+        return res.status(400).json({ message: "Invalid department ID" });
+
+      const { data, error } = await supabase
+        .from("employee_department_assignments")
+        .select(`
+          *,
+          employee:employees(id, name, employee_id)
+        `)
+        .eq("department_id", departmentId)
+        .order("assigned_at", { ascending: false });
+
+      if (error) return res.status(500).json({ message: error.message });
+      res.json(data || []);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
+  app.post("/api/departments/:id/employees", async (req, res) => {
+    try {
+      const departmentId = Number(req.params.id);
+      if (Number.isNaN(departmentId))
+        return res.status(400).json({ message: "Invalid department ID" });
+
+      const { employee_id } = req.body;
+      if (!employee_id)
+        return res.status(400).json({ message: "employee_id is required" });
+
+      const { data, error } = await supabase
+        .from("employee_department_assignments")
+        .insert([{
+          department_id: departmentId,
+          employee_id: employee_id,
+          assigned_at: new Date().toISOString(),
+        }])
+        .select(`
+          *,
+          employee:employees(id, name, employee_id)
+        `)
+        .maybeSingle();
+
+      if (error) {
+        if (error.code === '23505') { // Unique constraint violation
+          return res.status(400).json({ message: "Employee is already assigned to this department" });
+        }
+        return res.status(500).json({ message: error.message });
+      }
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
+  app.delete("/api/departments/:departmentId/employees/:assignmentId", async (req, res) => {
+    try {
+      const assignmentId = Number(req.params.assignmentId);
+      if (Number.isNaN(assignmentId))
+        return res.status(400).json({ message: "Invalid assignment ID" });
+
+      const { error } = await supabase
+        .from("employee_department_assignments")
+        .delete()
+        .eq("id", assignmentId);
+
+      if (error) return res.status(500).json({ message: error.message });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
 
   // ---------------- ASSETS ----------------
   app.get("/api/assets", async (req, res) => {
