@@ -698,11 +698,26 @@ function registerRoutes(app) {
         try {
             const { data, error } = await supabaseClient_1.supabase
                 .from("employees")
-                .select("*")
+                .select(`
+          *,
+          department_assignments:employee_department_assignments(
+            department:departments(id, name)
+          )
+        `)
                 .order("name", { ascending: true });
             if (error)
                 return res.status(500).json({ message: error.message });
-            res.json(data || []);
+            // Transform data to include department name
+            const transformed = (data || []).map((emp) => {
+                const departmentAssignment = emp.department_assignments?.[0];
+                return {
+                    id: emp.id,
+                    name: emp.name,
+                    employee_id: emp.employee_id,
+                    department_name: departmentAssignment?.department?.name || null,
+                };
+            });
+            res.json(transformed);
         }
         catch (e) {
             res.status(500).json({ message: e?.message || "Internal error" });
