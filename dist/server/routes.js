@@ -396,7 +396,7 @@ function registerRoutes(app) {
             return {
                 error: {
                     message: errorMessage,
-                    details: error.details || error.hint || null,
+                    details: error.details || null,
                     code: error.code
                 }
             };
