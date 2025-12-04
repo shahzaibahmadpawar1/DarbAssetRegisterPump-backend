@@ -13,27 +13,33 @@ function registerRoutes(app) {
     const sanitizeAssignments = (input) => {
         if (!Array.isArray(input))
             return [];
-        // Keep rows as-is; grouping per pump happens server-side so we can track batch preferences
+        // Each assignment should have pump_id and items array
+        // Each item has batch_id, serial_number (optional), barcode (optional)
         const result = [];
-        input.forEach((item) => {
-            const pumpId = Number(item?.pump_id);
-            const qty = Number(item?.quantity);
-            const batchId = item?.batch_id ? Number(item.batch_id) : undefined;
+        input.forEach((assignment) => {
+            const pumpId = Number(assignment?.pump_id);
             if (!Number.isFinite(pumpId) || pumpId <= 0)
                 return;
-            if (!Number.isFinite(qty) || qty <= 0)
-                return;
-            if (batchId !== undefined && (!Number.isFinite(batchId) || batchId <= 0))
-                return;
-            result.push({
-                pump_id: pumpId,
-                quantity: qty,
-                batch_id: batchId,
-            });
+            const items = [];
+            if (Array.isArray(assignment.items)) {
+                assignment.items.forEach((item) => {
+                    const batchId = Number(item?.batch_id);
+                    if (!Number.isFinite(batchId) || batchId <= 0)
+                        return;
+                    items.push({
+                        batch_id: batchId,
+                        serial_number: item?.serial_number?.trim() || undefined,
+                        barcode: item?.barcode?.trim() || undefined,
+                    });
+                });
+            }
+            if (items.length > 0) {
+                result.push({ pump_id: pumpId, items });
+            }
         });
         return result;
     };
-    const sumAssignmentQuantity = (assignments) => assignments.reduce((total, assignment) => total + assignment.quantity, 0);
+    const sumAssignmentQuantity = (assignments) => assignments.reduce((total, assignment) => total + assignment.items.length, 0);
     const hydrateAssets = async (assets) => {
         if (!assets || assets.length === 0)
             return { data: [], error: null };
@@ -177,33 +183,54 @@ function registerRoutes(app) {
             return { error: deleteError };
         if (assignments.length === 0)
             return { error: null };
-        // Create assignments and allocate from specified batches
-        const groupedAssignments = Array.from(assignments.reduce((map, assignment) => {
-            const existing = map.get(assignment.pump_id) || {
-                pump_id: assignment.pump_id,
-                totalQuantity: 0,
-                manualByBatch: new Map(),
-                autoQuantity: 0,
-            };
-            existing.totalQuantity += assignment.quantity;
-            if (assignment.batch_id) {
-                existing.manualByBatch.set(assignment.batch_id, (existing.manualByBatch.get(assignment.batch_id) || 0) + assignment.quantity);
+        // Group assignments by pump_id and collect all items
+        const groupedByPump = new Map();
+        for (const assignment of assignments) {
+            const existing = groupedByPump.get(assignment.pump_id) || [];
+            groupedByPump.set(assignment.pump_id, [...existing, ...assignment.items]);
+        }
+        // Verify batch availability for all items
+        const allItems = [];
+        for (const items of groupedByPump.values()) {
+            allItems.push(...items);
+        }
+        // Check batch availability
+        const batchCounts = new Map();
+        for (const item of allItems) {
+            batchCounts.set(item.batch_id, (batchCounts.get(item.batch_id) || 0) + 1);
+        }
+        for (const [batchId, requestedCount] of batchCounts.entries()) {
+            const { data: batch, error: batchError } = await supabaseClient_1.supabase
+                .from("asset_purchase_batches")
+                .select("remaining_quantity")
+                .eq("id", batchId)
+                .eq("asset_id", assetId)
+                .maybeSingle();
+            if (batchError || !batch) {
+                return {
+                    error: {
+                        message: `Batch ${batchId} not found or invalid.`,
+                    },
+                };
             }
-            else {
-                existing.autoQuantity += assignment.quantity;
+            if (batch.remaining_quantity < requestedCount) {
+                return {
+                    error: {
+                        message: `Insufficient stock in batch ${batchId}. Only ${batch.remaining_quantity} items available, but ${requestedCount} requested.`,
+                    },
+                };
             }
-            map.set(assignment.pump_id, existing);
-            return map;
-        }, new Map())).map((entry) => entry[1]);
-        const assignmentRows = groupedAssignments.map((group) => ({
+        }
+        // Create assignment records (one per pump)
+        const assignmentRows = Array.from(groupedByPump.entries()).map(([pump_id, items]) => ({
             asset_id: assetId,
-            pump_id: group.pump_id,
-            quantity: group.totalQuantity,
+            pump_id,
+            quantity: items.length, // Store total count for compatibility
         }));
         const { data: insertedAssignments, error: insertError } = await supabaseClient_1.supabase
             .from("asset_assignments")
             .insert(assignmentRows)
-            .select("id, pump_id, quantity");
+            .select("id, pump_id");
         if (insertError)
             return { error: insertError };
         const deleteInsertedAssignments = async () => {
@@ -214,73 +241,22 @@ function registerRoutes(app) {
                     .in("id", insertedAssignments.map((a) => a.id));
             }
         };
-        const insertedByPump = new Map();
-        insertedAssignments?.forEach((row) => {
-            insertedByPump.set(row.pump_id, row);
-        });
-        // Allocate from specified batches for each assignment
-        for (const group of groupedAssignments) {
-            const assignmentRow = insertedByPump.get(group.pump_id);
-            if (!assignmentRow)
-                continue;
-            const manualAllocations = [];
-            for (const [batchId, qty] of group.manualByBatch.entries()) {
-                const { data: batch, error: batchError } = await supabaseClient_1.supabase
-                    .from("asset_purchase_batches")
-                    .select("remaining_quantity")
-                    .eq("id", batchId)
-                    .eq("asset_id", assetId)
-                    .maybeSingle();
-                if (batchError || !batch) {
-                    await deleteInsertedAssignments();
-                    return {
-                        error: {
-                            message: `Batch not found or invalid.`,
-                        },
-                    };
-                }
-                if (batch.remaining_quantity < qty) {
-                    await deleteInsertedAssignments();
-                    return {
-                        error: {
-                            message: `Insufficient stock in selected batch. Only ${batch.remaining_quantity} units available.`,
-                        },
-                    };
-                }
-                manualAllocations.push({ batch_id: batchId, quantity: qty });
-            }
-            const manualTotal = manualAllocations.reduce((sum, alloc) => sum + alloc.quantity, 0);
-            if (manualTotal > assignmentRow.quantity) {
+        // Create allocation records (one per item)
+        for (const assignment of assignments) {
+            const assignmentRow = insertedAssignments?.find((a) => a.pump_id === assignment.pump_id);
+            if (!assignmentRow) {
                 await deleteInsertedAssignments();
                 return {
                     error: {
-                        message: "Manual batch allocations exceed the requested quantity.",
+                        message: `Failed to find assignment for pump ${assignment.pump_id}`,
                     },
                 };
             }
-            const remainingQty = assignmentRow.quantity - manualTotal;
-            let allocations = [...manualAllocations];
-            if (remainingQty > 0) {
-                const autoAllocations = await allocateFromBatches(assetId, remainingQty);
-                if (!autoAllocations) {
-                    await deleteInsertedAssignments();
-                    return {
-                        error: {
-                            message: `Insufficient stock. Cannot allocate ${remainingQty} units.`,
-                        },
-                    };
-                }
-                allocations = allocations.concat(autoAllocations);
-            }
-            if (allocations.length === 0) {
+            const result = await createBatchAllocations(assignmentRow.id, assignment.items);
+            if (result.error) {
                 await deleteInsertedAssignments();
-                return {
-                    error: {
-                        message: "No valid batch allocations were provided.",
-                    },
-                };
+                return result;
             }
-            await createBatchAllocations(assignmentRow.id, allocations);
         }
         return { error: null };
     };
@@ -318,7 +294,7 @@ function registerRoutes(app) {
         return { ok: true, error: null };
     };
     // ========== BATCH FUNCTIONS ==========
-    const createPurchaseBatch = async (assetId, purchasePrice, quantity, purchaseDate, remarks, serialNumber, barcode, batchName) => {
+    const createPurchaseBatch = async (assetId, purchasePrice, quantity, purchaseDate, remarks, batchName) => {
         const { data, error } = await supabaseClient_1.supabase
             .from("asset_purchase_batches")
             .insert([
@@ -329,8 +305,6 @@ function registerRoutes(app) {
                 remaining_quantity: quantity,
                 purchase_date: purchaseDate || new Date().toISOString(),
                 remarks: remarks || null,
-                serial_number: serialNumber ?? null,
-                barcode: barcode ?? null,
                 batch_name: batchName || null,
             },
         ])
@@ -366,21 +340,39 @@ function registerRoutes(app) {
         }
         return allocations;
     };
-    const createBatchAllocations = async (assignmentId, allocations) => {
-        if (allocations.length === 0)
+    const createBatchAllocations = async (assignmentId, items) => {
+        if (items.length === 0)
             return { error: null };
-        const rows = allocations.map((alloc) => ({
+        // Create one allocation record per item
+        const rows = items.map((item) => ({
             assignment_id: assignmentId,
-            batch_id: alloc.batch_id,
-            quantity: alloc.quantity,
+            batch_id: item.batch_id,
+            serial_number: item.serial_number?.trim() || null,
+            barcode: item.barcode?.trim() || null,
         }));
         const { error } = await supabaseClient_1.supabase
             .from("assignment_batch_allocations")
             .insert(rows);
         return { error };
     };
-    const calculateAssignmentValue = (allocations) => {
-        return allocations.reduce((sum, alloc) => sum + alloc.quantity * alloc.unit_price, 0);
+    const calculateAssignmentValue = async (assignmentId) => {
+        // Get all allocations for this assignment and calculate total value
+        const { data: allocations, error } = await supabaseClient_1.supabase
+            .from("assignment_batch_allocations")
+            .select("batch_id")
+            .eq("assignment_id", assignmentId);
+        if (error || !allocations)
+            return 0;
+        // Get batch prices
+        const batchIds = allocations.map((a) => a.batch_id);
+        const { data: batches } = await supabaseClient_1.supabase
+            .from("asset_purchase_batches")
+            .select("purchase_price")
+            .in("id", batchIds);
+        if (!batches)
+            return 0;
+        // Each allocation is one item, so sum up the prices
+        return batches.reduce((sum, batch) => sum + Number(batch.purchase_price), 0);
     };
     // ---------------- AUTH ----------------
     app.post("/api/login", async (req, res) => {
@@ -725,34 +717,49 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
+    // Employee Asset Assignments - now requires serial_number and barcode per item
     app.post("/api/employees/:id/assignments", async (req, res) => {
         try {
             const employeeId = Number(req.params.id);
             if (Number.isNaN(employeeId))
                 return res.status(400).json({ message: "Invalid employee ID" });
-            const { batch_id, quantity, assignment_date } = req.body;
-            if (!batch_id || !quantity || quantity <= 0)
-                return res.status(400).json({ message: "batch_id and quantity (positive) are required" });
-            // Check batch exists and has enough remaining quantity
-            const { data: batch, error: batchError } = await supabaseClient_1.supabase
-                .from("asset_purchase_batches")
-                .select("remaining_quantity")
-                .eq("id", batch_id)
-                .maybeSingle();
-            if (batchError || !batch)
-                return res.status(404).json({ message: "Batch not found" });
-            if (batch.remaining_quantity < quantity)
-                return res.status(400).json({
-                    message: `Insufficient quantity. Only ${batch.remaining_quantity} available in this batch.`
-                });
+            const { items, assignment_date } = req.body;
+            if (!Array.isArray(items) || items.length === 0)
+                return res.status(400).json({ message: "items array with at least one item is required" });
+            // Validate items and check batch availability
+            const batchCounts = new Map();
+            for (const item of items) {
+                const batchId = Number(item?.batch_id);
+                if (!Number.isFinite(batchId) || batchId <= 0)
+                    return res.status(400).json({ message: "Each item must have a valid batch_id" });
+                batchCounts.set(batchId, (batchCounts.get(batchId) || 0) + 1);
+            }
+            // Check batch availability
+            for (const [batchId, requestedCount] of batchCounts.entries()) {
+                const { data: batch, error: batchError } = await supabaseClient_1.supabase
+                    .from("asset_purchase_batches")
+                    .select("remaining_quantity")
+                    .eq("id", batchId)
+                    .maybeSingle();
+                if (batchError || !batch)
+                    return res.status(404).json({ message: `Batch ${batchId} not found` });
+                if (batch.remaining_quantity < requestedCount)
+                    return res.status(400).json({
+                        message: `Insufficient quantity in batch ${batchId}. Only ${batch.remaining_quantity} available, but ${requestedCount} requested.`
+                    });
+            }
+            // Create assignment records (one per item)
+            const assignmentDate = assignment_date ? new Date(assignment_date).toISOString() : new Date().toISOString();
+            const assignmentRows = items.map((item) => ({
+                employee_id: employeeId,
+                batch_id: Number(item.batch_id),
+                serial_number: item.serial_number?.trim() || null,
+                barcode: item.barcode?.trim() || null,
+                assignment_date: assignmentDate,
+            }));
             const { data, error } = await supabaseClient_1.supabase
                 .from("employee_asset_assignments")
-                .insert([{
-                    employee_id: employeeId,
-                    batch_id: batch_id,
-                    quantity: quantity,
-                    assignment_date: assignment_date ? new Date(assignment_date).toISOString() : new Date().toISOString(),
-                }])
+                .insert(assignmentRows)
                 .select(`
           *,
           batch:asset_purchase_batches(
@@ -761,8 +768,7 @@ function registerRoutes(app) {
             purchase_price,
             asset:assets(id, asset_name, asset_number)
           )
-        `)
-                .maybeSingle();
+        `);
             if (error)
                 return res.status(500).json({ message: error.message });
             res.json(data);
@@ -1437,17 +1443,11 @@ function registerRoutes(app) {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
                 return res.status(400).json({ message: "Invalid asset ID" });
-            const { purchase_price, quantity, purchase_date, remarks, serial_number, barcode, batch_name } = req.body;
+            const { purchase_price, quantity, purchase_date, remarks, batch_name } = req.body;
             if (!purchase_price || purchase_price <= 0)
                 return res.status(400).json({ message: "Purchase price required" });
             if (!quantity || quantity <= 0)
                 return res.status(400).json({ message: "Quantity required" });
-            if (!serial_number || typeof serial_number !== "string" || !serial_number.trim())
-                return res.status(400).json({ message: "Serial number required" });
-            if (!barcode || typeof barcode !== "string" || !barcode.trim())
-                return res.status(400).json({ message: "Barcode required" });
-            const normalizedSerial = serial_number.trim();
-            const normalizedBarcode = barcode.trim();
             const normalizedBatchName = batch_name?.trim() || null;
             // Verify asset exists
             const { data: asset, error: assetError } = await supabaseClient_1.supabase
@@ -1463,14 +1463,10 @@ function registerRoutes(app) {
                 .from("assets")
                 .update({ quantity: newQuantity })
                 .eq("id", id);
-            // Create batch
-            const { data: batch, error: batchError } = await createPurchaseBatch(id, Number(purchase_price), Number(quantity), purchase_date ? new Date(purchase_date) : undefined, remarks || null, normalizedSerial, normalizedBarcode, normalizedBatchName);
+            // Create batch (serial_number and barcode are now tracked at assignment level)
+            const { data: batch, error: batchError } = await createPurchaseBatch(id, Number(purchase_price), Number(quantity), purchase_date ? new Date(purchase_date) : undefined, remarks || null, normalizedBatchName);
             if (batchError)
                 return res.status(500).json({ message: batchError.message });
-            await supabaseClient_1.supabase
-                .from("assets")
-                .update({ serial_number: normalizedSerial, barcode: normalizedBarcode })
-                .eq("id", id);
             return res.status(201).json(batch);
         }
         catch (e) {
@@ -1484,7 +1480,7 @@ function registerRoutes(app) {
             const batchId = Number(req.params.batchId);
             if (Number.isNaN(assetId) || Number.isNaN(batchId))
                 return res.status(400).json({ message: "Invalid IDs" });
-            const { purchase_price, purchase_date, serial_number, barcode, batch_name } = req.body;
+            const { purchase_price, purchase_date, batch_name } = req.body;
             if (purchase_price != null && purchase_price <= 0)
                 return res.status(400).json({ message: "Purchase price must be greater than 0" });
             // Verify batch exists and belongs to asset
@@ -1501,18 +1497,6 @@ function registerRoutes(app) {
                 updateData.purchase_price = Number(purchase_price);
             if (purchase_date)
                 updateData.purchase_date = new Date(purchase_date).toISOString();
-            if (serial_number != null) {
-                if (typeof serial_number !== "string" || !serial_number.trim()) {
-                    return res.status(400).json({ message: "Serial number cannot be empty" });
-                }
-                updateData.serial_number = serial_number.trim();
-            }
-            if (barcode != null) {
-                if (typeof barcode !== "string" || !barcode.trim()) {
-                    return res.status(400).json({ message: "Barcode cannot be empty" });
-                }
-                updateData.barcode = barcode.trim();
-            }
             if (batch_name != null) {
                 updateData.batch_name = batch_name?.trim() || null;
             }
@@ -1526,15 +1510,6 @@ function registerRoutes(app) {
                 .maybeSingle();
             if (updateError)
                 return res.status(500).json({ message: updateError.message });
-            if (updateData.serial_number || updateData.barcode) {
-                await supabaseClient_1.supabase
-                    .from("assets")
-                    .update({
-                    ...(updateData.serial_number ? { serial_number: updateData.serial_number } : {}),
-                    ...(updateData.barcode ? { barcode: updateData.barcode } : {}),
-                })
-                    .eq("id", assetId);
-            }
             return res.json(updated);
         }
         catch (e) {
