@@ -346,7 +346,12 @@ export function registerRoutes(app: Express) {
       const result = await createBatchAllocations(assignmentRow.id, assignment.items);
       if (result.error) {
         await deleteInsertedAssignments();
-        return result;
+        return {
+          error: {
+            message: result.error.message || "Failed to create batch allocations",
+            details: result.error.details || null
+          }
+        };
       }
     }
 
@@ -478,7 +483,26 @@ export function registerRoutes(app: Express) {
     const { error } = await supabase
       .from("assignment_batch_allocations")
       .insert(rows);
-    return { error };
+    
+    if (error) {
+      // Provide more detailed error message
+      let errorMessage = error.message || "Failed to create batch allocations";
+      if (error.code === '23505') { // Unique constraint violation
+        if (error.message.includes('serial_number')) {
+          errorMessage = "A serial number you entered already exists. Please use a unique serial number.";
+        } else if (error.message.includes('barcode')) {
+          errorMessage = "A barcode you entered already exists. Please use a unique barcode.";
+        }
+      }
+      return { 
+        error: {
+          message: errorMessage,
+          details: error.details || error.hint || null,
+          code: error.code
+        }
+      };
+    }
+    return { error: null };
   };
 
   const calculateAssignmentValue = async (
@@ -932,7 +956,25 @@ export function registerRoutes(app: Express) {
           )
         `);
 
-      if (error) return res.status(500).json({ message: error.message });
+      if (error) {
+        // Provide more detailed error message
+        let errorMessage = error.message || "Failed to create employee assignment";
+        if (error.message && error.message.includes('quantity')) {
+          errorMessage = "Database schema mismatch: The 'quantity' field no longer exists. Please run the database migration script to update your schema.";
+        } else if (error.code === '23505') { // Unique constraint violation
+          if (error.message && error.message.includes('serial_number')) {
+            errorMessage = "A serial number you entered already exists. Please use a unique serial number.";
+          } else if (error.message && error.message.includes('barcode')) {
+            errorMessage = "A barcode you entered already exists. Please use a unique barcode.";
+          }
+        }
+        console.error("Employee assignment error:", error);
+        return res.status(500).json({ 
+          message: errorMessage,
+          details: error.details || error.hint || null,
+          code: error.code
+        });
+      }
       res.json(data);
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Internal error" });
@@ -1357,8 +1399,14 @@ export function registerRoutes(app: Express) {
 
       if (shouldReplaceAssignments) {
         const { error } = await replaceAssetAssignments(id, assignments);
-        if (error)
-          return res.status(500).json({ message: error.message });
+        if (error) {
+          const errorMessage = error.message || "Failed to update assignments";
+          console.error("Assignment update error:", error);
+          return res.status(500).json({ 
+            message: errorMessage,
+            details: error.details || null
+          });
+        }
       }
 
       const enriched = await fetchAssetById(id);
