@@ -1464,7 +1464,7 @@ function registerRoutes(app) {
                 .update({ quantity: newQuantity })
                 .eq("id", id);
             // Create batch
-            const { data: batch, error: batchError } = await createPurchaseBatch(id, Number(purchase_price), Number(quantity), purchase_date ? new Date(purchase_date) : undefined, remarks || null, normalizedSerial, normalizedBarcode);
+            const { data: batch, error: batchError } = await createPurchaseBatch(id, Number(purchase_price), Number(quantity), purchase_date ? new Date(purchase_date) : undefined, remarks || null, normalizedSerial, normalizedBarcode, normalizedBatchName);
             if (batchError)
                 return res.status(500).json({ message: batchError.message });
             await supabaseClient_1.supabase

@@ -1698,7 +1698,8 @@ export function registerRoutes(app: Express) {
         purchase_date ? new Date(purchase_date) : undefined,
         remarks || null,
         normalizedSerial,
-        normalizedBarcode
+        normalizedBarcode,
+        normalizedBatchName
       );
 
       if (batchError) return res.status(500).json({ message: batchError.message });
