@@ -702,19 +702,86 @@ function registerRoutes(app) {
           *,
           department_assignments:employee_department_assignments(
             department:departments(id, name)
+          ),
+          asset_assignments:employee_asset_assignments(
+            id,
+            batch_id,
+            serial_number,
+            barcode,
+            assignment_date,
+            batch:asset_purchase_batches(
+              id,
+              batch_name,
+              purchase_date,
+              purchase_price,
+              asset:assets(id, asset_name, asset_number)
+            )
           )
         `)
                 .order("name", { ascending: true });
             if (error)
                 return res.status(500).json({ message: error.message });
-            // Transform data to include department name
+            // Transform data to include department name and asset assignments
             const transformed = (data || []).map((emp) => {
                 const departmentAssignment = emp.department_assignments?.[0];
+                // Group asset assignments by asset and batch
+                const assetAssignments = (emp.asset_assignments || []).map((assignment) => ({
+                    id: assignment.id,
+                    batch_id: assignment.batch_id,
+                    batch_name: assignment.batch?.batch_name || null,
+                    purchase_date: assignment.batch?.purchase_date || null,
+                    purchase_price: assignment.batch?.purchase_price || null,
+                    serial_number: assignment.serial_number,
+                    barcode: assignment.barcode,
+                    assignment_date: assignment.assignment_date,
+                    asset: assignment.batch?.asset ? {
+                        id: assignment.batch.asset.id,
+                        asset_name: assignment.batch.asset.asset_name,
+                        asset_number: assignment.batch.asset.asset_number,
+                    } : null,
+                }));
+                // Group by asset and batch to show quantities
+                const assetSummary = new Map();
+                assetAssignments.forEach((assignment) => {
+                    if (!assignment.asset)
+                        return;
+                    const assetKey = `${assignment.asset.id}`;
+                    if (!assetSummary.has(assetKey)) {
+                        assetSummary.set(assetKey, {
+                            asset_id: assignment.asset.id,
+                            asset_name: assignment.asset.asset_name,
+                            asset_number: assignment.asset.asset_number,
+                            batches: new Map(),
+                        });
+                    }
+                    const asset = assetSummary.get(assetKey);
+                    const batchKey = assignment.batch_id;
+                    if (!asset.batches.has(batchKey)) {
+                        asset.batches.set(batchKey, {
+                            batch_id: assignment.batch_id,
+                            batch_name: assignment.batch_name,
+                            purchase_date: assignment.purchase_date,
+                            quantity: 0,
+                            items: [],
+                        });
+                    }
+                    const batch = asset.batches.get(batchKey);
+                    batch.quantity += 1;
+                    batch.items.push(assignment);
+                });
+                // Convert to array format
+                const assetAssignmentsSummary = Array.from(assetSummary.values()).map(asset => ({
+                    asset_id: asset.asset_id,
+                    asset_name: asset.asset_name,
+                    asset_number: asset.asset_number,
+                    batches: Array.from(asset.batches.values()),
+                }));
                 return {
                     id: emp.id,
                     name: emp.name,
                     employee_id: emp.employee_id,
                     department_name: departmentAssignment?.department?.name || null,
+                    asset_assignments: assetAssignmentsSummary,
                 };
             });
             res.json(transformed);
