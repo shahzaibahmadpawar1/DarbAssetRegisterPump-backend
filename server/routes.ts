@@ -1154,6 +1154,132 @@ export function registerRoutes(app: Express) {
     }
   });
 
+  // Transfer assets from one employee to another
+  app.put("/api/employees/:fromId/transfer-assets/:toId", async (req, res) => {
+    try {
+      const fromId = Number(req.params.fromId);
+      const toId = Number(req.params.toId);
+      
+      if (Number.isNaN(fromId) || Number.isNaN(toId))
+        return res.status(400).json({ message: "Invalid employee ID" });
+      
+      if (fromId === toId)
+        return res.status(400).json({ message: "Cannot transfer assets to the same employee" });
+
+      const { assignment_ids } = req.body;
+      
+      // If assignment_ids is provided, transfer only those specific assignments
+      // Otherwise, transfer all assets from the source employee
+      if (assignment_ids && Array.isArray(assignment_ids) && assignment_ids.length > 0) {
+        // Transfer specific assignments
+        const assignmentIds = assignment_ids.map((id: any) => Number(id)).filter((id: number) => !Number.isNaN(id));
+        
+        if (assignmentIds.length === 0)
+          return res.status(400).json({ message: "No valid assignment IDs provided" });
+
+        const { error } = await supabase
+          .from("employee_asset_assignments")
+          .update({ employee_id: toId })
+          .eq("employee_id", fromId)
+          .in("id", assignmentIds);
+
+        if (error) return res.status(500).json({ message: error.message });
+      } else {
+        // Transfer all assets
+        const { error } = await supabase
+          .from("employee_asset_assignments")
+          .update({ employee_id: toId })
+          .eq("employee_id", fromId);
+
+        if (error) return res.status(500).json({ message: error.message });
+      }
+
+      res.json({ ok: true, message: "Assets transferred successfully" });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
+  // Transfer employee from one department to another
+  app.put("/api/employees/:id/transfer-department", async (req, res) => {
+    try {
+      const employeeId = Number(req.params.id);
+      if (Number.isNaN(employeeId))
+        return res.status(400).json({ message: "Invalid employee ID" });
+
+      const { department_id } = req.body;
+      if (department_id === undefined)
+        return res.status(400).json({ message: "department_id is required" });
+
+      const targetDepartmentId = department_id === null || department_id === "null" ? null : Number(department_id);
+      if (targetDepartmentId !== null && Number.isNaN(targetDepartmentId))
+        return res.status(400).json({ message: "Invalid department ID" });
+
+      // Get current department assignment
+      const { data: currentAssignment, error: fetchError } = await supabase
+        .from("employee_department_assignments")
+        .select("id, department_id")
+        .eq("employee_id", employeeId)
+        .maybeSingle();
+
+      if (fetchError && fetchError.code !== "PGRST116") // PGRST116 = not found
+        return res.status(500).json({ message: fetchError.message });
+
+      // If target is null, remove department assignment
+      if (targetDepartmentId === null) {
+        if (currentAssignment) {
+          const { error: deleteError } = await supabase
+            .from("employee_department_assignments")
+            .delete()
+            .eq("id", currentAssignment.id);
+
+          if (deleteError) return res.status(500).json({ message: deleteError.message });
+        }
+        return res.json({ ok: true, message: "Employee removed from department" });
+      }
+
+      // Check if target department exists
+      const { data: dept, error: deptError } = await supabase
+        .from("departments")
+        .select("id")
+        .eq("id", targetDepartmentId)
+        .maybeSingle();
+
+      if (deptError) return res.status(500).json({ message: deptError.message });
+      if (!dept) return res.status(404).json({ message: "Target department not found" });
+
+      // If employee is already in this department, do nothing
+      if (currentAssignment && currentAssignment.department_id === targetDepartmentId) {
+        return res.json({ ok: true, message: "Employee is already in this department" });
+      }
+
+      // Remove old assignment if exists
+      if (currentAssignment) {
+        const { error: deleteError } = await supabase
+          .from("employee_department_assignments")
+          .delete()
+          .eq("id", currentAssignment.id);
+
+        if (deleteError) return res.status(500).json({ message: deleteError.message });
+      }
+
+      // Create new assignment
+      const { error: insertError } = await supabase
+        .from("employee_department_assignments")
+        .insert([{
+          employee_id: employeeId,
+          department_id: targetDepartmentId,
+          assigned_at: new Date().toISOString(),
+        }]);
+
+      if (insertError) return res.status(500).json({ message: insertError.message });
+
+      res.json({ ok: true, message: "Employee transferred successfully" });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
   // ---------------- DEPARTMENTS ----------------
   app.get("/api/departments", async (_req, res) => {
     try {
