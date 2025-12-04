@@ -638,23 +638,76 @@ export function registerRoutes(app: Express) {
 
       const { data: assignmentRows, error: assignmentErr } = await supabase
         .from("asset_assignments")
-        .select("asset_id, pump_id");
+        .select("id, asset_id, pump_id");
       if (assignmentErr)
         return res.status(500).json({ message: assignmentErr.message });
 
+      // Get all batch allocations for these assignments
+      const assignmentIds = (assignmentRows || []).map((a: any) => a.id);
+      let allocationRows: any[] = [];
+      if (assignmentIds.length > 0) {
+        const { data: allocations, error: allocationErr } = await supabase
+          .from("assignment_batch_allocations")
+          .select("assignment_id, batch_id")
+          .in("assignment_id", assignmentIds);
+        
+        if (allocationErr)
+          return res.status(500).json({ message: allocationErr.message });
+        
+        allocationRows = allocations || [];
+        
+        // Get batch prices
+        const batchIds = Array.from(new Set(allocationRows.map((a: any) => a.batch_id)));
+        if (batchIds.length > 0) {
+          const { data: batches, error: batchErr } = await supabase
+            .from("asset_purchase_batches")
+            .select("id, purchase_price")
+            .in("id", batchIds);
+          
+          if (batchErr)
+            return res.status(500).json({ message: batchErr.message });
+          
+          // Create a map of batch_id to purchase_price
+          const batchPriceMap = new Map<number, number>();
+          (batches || []).forEach((b: any) => {
+            batchPriceMap.set(b.id, Number(b.purchase_price || 0));
+          });
+          
+          // Add purchase_price to each allocation
+          allocationRows = allocationRows.map((alloc: any) => ({
+            ...alloc,
+            purchase_price: batchPriceMap.get(alloc.batch_id) || 0,
+          }));
+        }
+      }
+
       const seen = new Set<string>();
       const assetCountMap = new Map<number, number>();
+      const assetValueMap = new Map<number, number>();
+      
+      // Create a map of assignment_id to pump_id
+      const assignmentToPump = new Map<number, number>();
       (assignmentRows || []).forEach((row: any) => {
         if (!row.pump_id) return;
+        assignmentToPump.set(row.id, row.pump_id);
         const key = `${row.pump_id}-${row.asset_id}`;
         if (seen.has(key)) return;
         seen.add(key);
         assetCountMap.set(row.pump_id, (assetCountMap.get(row.pump_id) || 0) + 1);
       });
 
+      // Calculate total asset value per pump
+      (allocationRows || []).forEach((alloc: any) => {
+        const pumpId = assignmentToPump.get(alloc.assignment_id);
+        if (!pumpId) return;
+        const price = alloc.purchase_price || 0;
+        assetValueMap.set(pumpId, (assetValueMap.get(pumpId) || 0) + price);
+      });
+
       const result = pumps.map((p: any) => ({
         ...p,
         assetCount: assetCountMap.get(p.id) || 0,
+        totalAssetValue: assetValueMap.get(p.id) || 0,
       }));
 
       return res.json(result);
