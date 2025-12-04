@@ -57,11 +57,12 @@ function registerRoutes(app) {
                 .in("asset_id", assetIds),
         ]);
         // Fetch batch allocations separately after we have assignment IDs
+        // Each allocation is now one item (no quantity field)
         const assignmentIds = (assignmentRows || []).map((r) => r.id);
         const { data: allocationRows, error: allocationError } = assignmentIds.length > 0
             ? await supabaseClient_1.supabase
                 .from("assignment_batch_allocations")
-                .select("assignment_id, batch_id, quantity, asset_purchase_batches(purchase_price)")
+                .select("assignment_id, batch_id, serial_number, barcode, asset_purchase_batches(purchase_price)")
                 .in("assignment_id", assignmentIds)
             : { data: [], error: null };
         if (catError || pumpError || assignmentError || batchError || allocationError) {
@@ -79,27 +80,43 @@ function registerRoutes(app) {
             collection.push(batch);
             batchesByAsset.set(batch.asset_id, collection);
         });
+        // Group allocations by assignment_id and batch_id, counting items
+        // Each allocation row is now one item (no quantity field)
         (allocationRows || []).forEach((alloc) => {
             const collection = allocationsByAssignment.get(alloc.assignment_id) || [];
-            collection.push({
-                batch_id: alloc.batch_id,
-                quantity: alloc.quantity,
-                unit_price: Number(alloc.asset_purchase_batches?.purchase_price || 0),
-            });
+            // Check if we already have an entry for this batch_id
+            const existing = collection.find((item) => item.batch_id === alloc.batch_id);
+            if (existing) {
+                existing.quantity = (existing.quantity || 0) + 1;
+            }
+            else {
+                collection.push({
+                    batch_id: alloc.batch_id,
+                    quantity: 1, // Each allocation = 1 item
+                    unit_price: Number(alloc.asset_purchase_batches?.purchase_price || 0),
+                    serial_number: alloc.serial_number,
+                    barcode: alloc.barcode,
+                });
+            }
             allocationsByAssignment.set(alloc.assignment_id, collection);
         });
         const assignmentsByAsset = new Map();
         (assignmentRows || []).forEach((row) => {
             const collection = assignmentsByAsset.get(row.asset_id) || [];
             const batchAllocations = allocationsByAssignment.get(row.id) || [];
+            // Calculate quantity from batch allocations (count of items)
+            const calculatedQuantity = batchAllocations.reduce((sum, alloc) => sum + (alloc.quantity || 0), 0);
+            const assignmentQuantity = calculatedQuantity > 0 ? calculatedQuantity : (row.quantity || 0);
+            // Calculate assignment value from batch allocations
+            // Each allocation in batchAllocations has quantity (count of items) and unit_price
             const assignmentValue = batchAllocations.length > 0
-                ? calculateAssignmentValue(batchAllocations)
-                : Number(row.quantity || 0) * (Number(assets.find((a) => a.id === row.asset_id)?.asset_value) || 0);
+                ? batchAllocations.reduce((sum, alloc) => sum + (alloc.quantity || 0) * (alloc.unit_price || 0), 0)
+                : assignmentQuantity * (Number(assets.find((a) => a.id === row.asset_id)?.asset_value) || 0);
             collection.push({
                 id: row.id,
                 asset_id: row.asset_id,
                 pump_id: row.pump_id,
-                quantity: row.quantity,
+                quantity: assignmentQuantity, // Use calculated quantity from allocations
                 pump_name: row.pumps?.name ?? pumpMap.get(row.pump_id) ?? null,
                 assignment_value: assignmentValue,
                 batch_allocations: batchAllocations,
@@ -112,7 +129,14 @@ function registerRoutes(app) {
             // Calculate total value from batches
             const totalBatchValue = batches.reduce((sum, batch) => sum + Number(batch.purchase_price) * Number(batch.quantity), 0);
             const remainingBatchValue = batches.reduce((sum, batch) => sum + Number(batch.purchase_price) * Number(batch.remaining_quantity), 0);
-            const totalAssigned = assignmentList.reduce((total, assignment) => total + (assignment.quantity || 0), 0);
+            // Calculate total assigned by counting items in batch_allocations
+            const totalAssigned = assignmentList.reduce((total, assignment) => {
+                if (assignment.batch_allocations && assignment.batch_allocations.length > 0) {
+                    // Sum up quantities from batch allocations
+                    return total + assignment.batch_allocations.reduce((sum, alloc) => sum + (alloc.quantity || 0), 0);
+                }
+                return total + (assignment.quantity || 0);
+            }, 0);
             const totalAssignedValue = assignmentList.reduce((total, assignment) => total + (assignment.assignment_value || 0), 0);
             const totalQuantity = batches.reduce((sum, batch) => sum + Number(batch.quantity), 0);
             const remainingQuantity = batches.reduce((sum, batch) => sum + Number(batch.remaining_quantity), 0);
@@ -1206,15 +1230,26 @@ function registerRoutes(app) {
                 const quantity = body.quantity == null || Number.isNaN(Number(body.quantity))
                     ? null
                     : Number(body.quantity);
+                // Get existing assignments to understand current state
                 const { data: existingAssignments, error: existingError } = await supabaseClient_1.supabase
                     .from("asset_assignments")
-                    .select("pump_id, quantity")
+                    .select("id, pump_id")
                     .eq("asset_id", id);
                 if (existingError)
                     return res.status(500).json({ message: existingError.message });
+                // Get existing allocations to count current items per pump
+                const existingAssignmentIds = (existingAssignments || []).map((a) => a.id);
+                const { data: existingAllocations } = existingAssignmentIds.length > 0
+                    ? await supabaseClient_1.supabase
+                        .from("assignment_batch_allocations")
+                        .select("assignment_id, batch_id")
+                        .in("assignment_id", existingAssignmentIds)
+                    : { data: [] };
+                // Count current items per pump
                 const merged = new Map();
                 (existingAssignments || []).forEach((row) => {
-                    merged.set(row.pump_id, row.quantity || 0);
+                    const itemCount = (existingAllocations || []).filter((alloc) => alloc.assignment_id === row.id).length;
+                    merged.set(row.pump_id, itemCount);
                 });
                 if (quantity == null || quantity <= 0) {
                     merged.delete(pumpId);
@@ -1222,9 +1257,39 @@ function registerRoutes(app) {
                 else {
                     merged.set(pumpId, quantity);
                 }
-                nextAssignments = Array.from(merged.entries()).map(([pump_id, qty]) => ({
-                    pump_id,
-                    quantity: qty,
+                // Convert to new format: for each pump, we need to auto-allocate items from batches
+                // Since we don't have batch info in legacy format, we'll need to fetch available batches
+                // and auto-allocate (FIFO) for the requested quantities
+                const { data: availableBatches } = await supabaseClient_1.supabase
+                    .from("asset_purchase_batches")
+                    .select("id, remaining_quantity")
+                    .eq("asset_id", id)
+                    .gt("remaining_quantity", 0)
+                    .order("purchase_date", { ascending: true });
+                nextAssignments = await Promise.all(Array.from(merged.entries()).map(async ([pump_id, requestedQty]) => {
+                    const items = [];
+                    let remaining = requestedQty;
+                    // Auto-allocate from batches (FIFO)
+                    if (availableBatches) {
+                        for (const batch of availableBatches) {
+                            if (remaining <= 0)
+                                break;
+                            const toAllocate = Math.min(remaining, batch.remaining_quantity);
+                            for (let i = 0; i < toAllocate; i++) {
+                                items.push({
+                                    batch_id: batch.id,
+                                    serial_number: undefined,
+                                    barcode: undefined,
+                                });
+                            }
+                            remaining -= toAllocate;
+                        }
+                    }
+                    // If we couldn't allocate all items, return error will be handled by capacity check
+                    return {
+                        pump_id,
+                        items,
+                    };
                 }));
             }
             if (nextAssignments) {
