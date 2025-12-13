@@ -1122,15 +1122,58 @@ function registerRoutes(app) {
                 .order("name", { ascending: true });
             if (error)
                 return res.status(500).json({ message: error.message });
-            // Get employee counts for each department
+            // Get employee counts and total asset value for each department
             const departmentsWithCounts = await Promise.all((departments || []).map(async (dept) => {
+                // Get employee count
                 const { count, error: countError } = await supabaseClient_1.supabase
                     .from("employee_department_assignments")
                     .select("*", { count: "exact", head: true })
                     .eq("department_id", dept.id);
+                const employeeCount = countError ? 0 : (count || 0);
+                // Calculate total asset value from employee asset assignments
+                let totalAssetValue = 0;
+                if (employeeCount > 0) {
+                    // Get all employees in this department
+                    const { data: departmentEmployees, error: empError } = await supabaseClient_1.supabase
+                        .from("employee_department_assignments")
+                        .select("employee_id")
+                        .eq("department_id", dept.id);
+                    if (!empError && departmentEmployees && departmentEmployees.length > 0) {
+                        const employeeIds = departmentEmployees.map((de) => de.employee_id);
+                        // Get all employee asset assignments for these employees
+                        const { data: employeeAssignments, error: assignError } = await supabaseClient_1.supabase
+                            .from("employee_asset_assignments")
+                            .select("batch_id")
+                            .in("employee_id", employeeIds);
+                        if (!assignError && employeeAssignments && employeeAssignments.length > 0) {
+                            // Get unique batch IDs
+                            const batchIds = Array.from(new Set(employeeAssignments.map((ea) => ea.batch_id).filter((id) => id != null)));
+                            if (batchIds.length > 0) {
+                                // Get purchase prices for these batches
+                                const { data: batches, error: batchError } = await supabaseClient_1.supabase
+                                    .from("asset_purchase_batches")
+                                    .select("id, purchase_price")
+                                    .in("id", batchIds);
+                                if (!batchError && batches) {
+                                    // Create a map of batch_id to purchase_price
+                                    const batchPriceMap = new Map();
+                                    batches.forEach((b) => {
+                                        batchPriceMap.set(b.id, Number(b.purchase_price || 0));
+                                    });
+                                    // Sum up the purchase prices for all employee assignments
+                                    employeeAssignments.forEach((ea) => {
+                                        const price = batchPriceMap.get(ea.batch_id) || 0;
+                                        totalAssetValue += price;
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
                 return {
                     ...dept,
-                    employeeCount: countError ? 0 : (count || 0),
+                    employeeCount,
+                    totalAssetValue,
                 };
             }));
             res.json(departmentsWithCounts);
