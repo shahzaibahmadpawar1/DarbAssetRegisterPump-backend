@@ -80,7 +80,7 @@ export function registerRoutes(app: Express) {
       assignmentIds.length > 0
         ? await supabase
             .from("assignment_batch_allocations")
-            .select("assignment_id, batch_id, serial_number, barcode, asset_purchase_batches(purchase_price)")
+            .select("assignment_id, batch_id, serial_number, barcode, asset_purchase_batches(id, batch_name, purchase_date, purchase_price)")
             .in("assignment_id", assignmentIds)
         : { data: [], error: null };
 
@@ -106,6 +106,7 @@ export function registerRoutes(app: Express) {
     // Each allocation row is now one item (no quantity field)
     (allocationRows || []).forEach((alloc: any) => {
       const collection = allocationsByAssignment.get(alloc.assignment_id) || [];
+      const batch = alloc.asset_purchase_batches;
       // Check if we already have an entry for this batch_id
       const existing = collection.find((item: any) => item.batch_id === alloc.batch_id);
       if (existing) {
@@ -114,9 +115,15 @@ export function registerRoutes(app: Express) {
         collection.push({
           batch_id: alloc.batch_id,
           quantity: 1, // Each allocation = 1 item
-          unit_price: Number(alloc.asset_purchase_batches?.purchase_price || 0),
+          unit_price: Number(batch?.purchase_price || 0),
           serial_number: alloc.serial_number,
           barcode: alloc.barcode,
+          batch: batch ? {
+            id: batch.id,
+            batch_name: batch.batch_name,
+            purchase_date: batch.purchase_date,
+            purchase_price: Number(batch.purchase_price || 0),
+          } : null,
         });
       }
       allocationsByAssignment.set(alloc.assignment_id, collection);
@@ -1037,6 +1044,7 @@ export function registerRoutes(app: Express) {
           *,
           batch:asset_purchase_batches(
             id,
+            batch_name,
             purchase_date,
             purchase_price,
             asset:assets(id, asset_name, asset_number)
