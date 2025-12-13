@@ -10,6 +10,54 @@ function registerRoutes(app) {
     const JWT_SECRET = process.env.JWT_SECRET || "replace-with-secure-secret";
     const TOKEN_COOKIE_NAME = "token";
     const TOKEN_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+    // Permission checking middleware
+    const requireRole = (allowedRoles) => {
+        return async (req, res, next) => {
+            try {
+                let token = req.cookies?.[TOKEN_COOKIE_NAME];
+                if (!token) {
+                    const authHeader = req.headers.authorization;
+                    if (authHeader && authHeader.startsWith("Bearer ")) {
+                        token = authHeader.substring(7);
+                    }
+                }
+                if (!token) {
+                    return res.status(401).json({ message: "Authentication required" });
+                }
+                const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
+                const { data: user, error } = await supabaseClient_1.supabase
+                    .from("users")
+                    .select("id, username, role")
+                    .eq("id", decoded.userId)
+                    .maybeSingle();
+                if (error || !user) {
+                    return res.status(401).json({ message: "Invalid user" });
+                }
+                if (!allowedRoles.includes(user.role)) {
+                    return res.status(403).json({ message: "Insufficient permissions" });
+                }
+                req.user = user;
+                next();
+            }
+            catch (err) {
+                return res.status(401).json({ message: "Invalid token" });
+            }
+        };
+    };
+    // Helper to check if user can perform assignment actions
+    const canAssign = (req) => {
+        const user = req.user;
+        return user && (user.role === 'admin' || user.role === 'assigning_user');
+    };
+    // Helper to check if user is admin
+    const isAdmin = (req) => {
+        const user = req.user;
+        return user && user.role === 'admin';
+    };
+    // Middleware to require assignment permissions (admin or assigning_user)
+    const requireAssignPermission = requireRole(['admin', 'assigning_user']);
+    // Middleware to require any authenticated user (for viewing)
+    const requireAuth = requireRole(['admin', 'viewing_user', 'assigning_user']);
     const sanitizeAssignments = (input) => {
         if (!Array.isArray(input))
             return [];
@@ -436,7 +484,7 @@ function registerRoutes(app) {
             return res.status(400).json({ message: "Missing credentials" });
         const { data: user, error } = await supabaseClient_1.supabase
             .from("users")
-            .select("id, password_hash")
+            .select("id, password_hash, role")
             .eq("username", username)
             .maybeSingle();
         if (error || !user)
@@ -444,7 +492,7 @@ function registerRoutes(app) {
         const passwordOk = password === user.password_hash;
         if (!passwordOk)
             return res.status(401).json({ message: "Invalid credentials" });
-        const token = jsonwebtoken_1.default.sign({ userId: user.id }, JWT_SECRET, {
+        const token = jsonwebtoken_1.default.sign({ userId: user.id, role: user.role }, JWT_SECRET, {
             expiresIn: "7d",
         });
         // Set cookie with proper settings
@@ -500,7 +548,7 @@ function registerRoutes(app) {
             const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
             const { data, error } = await supabaseClient_1.supabase
                 .from("users")
-                .select("id, username")
+                .select("id, username, role")
                 .eq("id", decoded.userId)
                 .maybeSingle();
             if (error || !data) {
@@ -595,7 +643,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.post("/api/pumps", async (req, res) => {
+    app.post("/api/pumps", requireAssignPermission, async (req, res) => {
         const name = req.body?.name;
         const location = req.body?.location;
         const manager = req.body?.manager;
@@ -612,7 +660,7 @@ function registerRoutes(app) {
             return res.status(500).json({ message: error.message });
         return res.status(201).json(data);
     });
-    app.put("/api/pumps/:id", async (req, res) => {
+    app.put("/api/pumps/:id", requireAssignPermission, async (req, res) => {
         const id = Number(req.params.id);
         const body = req.body || {};
         const payload = {};
@@ -641,7 +689,7 @@ function registerRoutes(app) {
         res.json(data);
     });
     // Prevent deletion if assets exist
-    app.delete("/api/pumps/:id", async (req, res) => {
+    app.delete("/api/pumps/:id", requireAssignPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -680,7 +728,7 @@ function registerRoutes(app) {
             return res.status(500).json({ message: error.message });
         return res.json(data);
     });
-    app.post("/api/categories", async (req, res) => {
+    app.post("/api/categories", requireAssignPermission, async (req, res) => {
         const { name } = req.body;
         if (!name)
             return res.status(400).json({ message: "Category name required" });
@@ -693,7 +741,7 @@ function registerRoutes(app) {
             return res.status(500).json({ message: error.message });
         return res.status(201).json(data);
     });
-    app.delete("/api/categories/:id", async (req, res) => {
+    app.delete("/api/categories/:id", requireAssignPermission, async (req, res) => {
         const { id } = req.params;
         const { error } = await supabaseClient_1.supabase.from("categories").delete().eq("id", id);
         if (error)
@@ -797,7 +845,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.post("/api/employees", async (req, res) => {
+    app.post("/api/employees", requireAssignPermission, async (req, res) => {
         try {
             const { name, employee_id, department_id } = req.body;
             if (!name || typeof name !== "string" || !name.trim())
@@ -831,7 +879,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.put("/api/employees/:id", async (req, res) => {
+    app.put("/api/employees/:id", requireAssignPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -858,7 +906,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.delete("/api/employees/:id", async (req, res) => {
+    app.delete("/api/employees/:id", requireAssignPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -901,7 +949,7 @@ function registerRoutes(app) {
         }
     });
     // Employee Asset Assignments - now requires serial_number and barcode per item
-    app.post("/api/employees/:id/assignments", async (req, res) => {
+    app.post("/api/employees/:id/assignments", requireAssignPermission, async (req, res) => {
         try {
             const employeeId = Number(req.params.id);
             if (Number.isNaN(employeeId))
@@ -993,7 +1041,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.delete("/api/employees/:employeeId/assignments/:assignmentId", async (req, res) => {
+    app.delete("/api/employees/:employeeId/assignments/:assignmentId", requireAssignPermission, async (req, res) => {
         try {
             const assignmentId = Number(req.params.assignmentId);
             if (Number.isNaN(assignmentId))
@@ -1011,7 +1059,7 @@ function registerRoutes(app) {
         }
     });
     // Transfer assets from one employee to another
-    app.put("/api/employees/:fromId/transfer-assets/:toId", async (req, res) => {
+    app.put("/api/employees/:fromId/transfer-assets/:toId", requireAssignPermission, async (req, res) => {
         try {
             const fromId = Number(req.params.fromId);
             const toId = Number(req.params.toId);
@@ -1051,7 +1099,7 @@ function registerRoutes(app) {
         }
     });
     // Transfer employee from one department to another
-    app.put("/api/employees/:id/transfer-department", async (req, res) => {
+    app.put("/api/employees/:id/transfer-department", requireAssignPermission, async (req, res) => {
         try {
             const employeeId = Number(req.params.id);
             if (Number.isNaN(employeeId))
@@ -1215,7 +1263,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.post("/api/departments", async (req, res) => {
+    app.post("/api/departments", requireAssignPermission, async (req, res) => {
         try {
             const { name, manager } = req.body;
             if (!name || typeof name !== "string" || !name.trim())
@@ -1235,7 +1283,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.put("/api/departments/:id", async (req, res) => {
+    app.put("/api/departments/:id", requireAssignPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1264,7 +1312,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.delete("/api/departments/:id", async (req, res) => {
+    app.delete("/api/departments/:id", requireAssignPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1300,7 +1348,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.post("/api/departments/:id/employees", async (req, res) => {
+    app.post("/api/departments/:id/employees", requireAssignPermission, async (req, res) => {
         try {
             const departmentId = Number(req.params.id);
             if (Number.isNaN(departmentId))
@@ -1332,7 +1380,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.delete("/api/departments/:departmentId/employees/:assignmentId", async (req, res) => {
+    app.delete("/api/departments/:departmentId/employees/:assignmentId", requireAssignPermission, async (req, res) => {
         try {
             const assignmentId = Number(req.params.assignmentId);
             if (Number.isNaN(assignmentId))
@@ -1397,7 +1445,7 @@ function registerRoutes(app) {
         }
     });
     // ✅ CREATE ASSET — supports asset_value and purchase batches
-    app.post("/api/assets", async (req, res) => {
+    app.post("/api/assets", requireAssignPermission, async (req, res) => {
         try {
             const b = req.body || {};
             const asset_name = b.asset_name ?? b.assetName ?? null;
@@ -1458,7 +1506,7 @@ function registerRoutes(app) {
         }
     });
     // ✅ UPDATE ASSET — supports asset_value
-    app.put("/api/assets/:id", async (req, res) => {
+    app.put("/api/assets/:id", requireAssignPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1550,7 +1598,7 @@ function registerRoutes(app) {
         }
     });
     // DELETE ASSET
-    app.delete("/api/assets/:id", async (req, res) => {
+    app.delete("/api/assets/:id", requireAssignPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1567,7 +1615,7 @@ function registerRoutes(app) {
         }
     });
     // ASSIGN
-    app.put("/api/assets/:id/assign", async (req, res) => {
+    app.put("/api/assets/:id/assign", requireAssignPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1880,7 +1928,7 @@ function registerRoutes(app) {
         }
     });
     // Add new batch (inventory) to existing asset
-    app.post("/api/assets/:id/batches", async (req, res) => {
+    app.post("/api/assets/:id/batches", requireAssignPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1916,7 +1964,7 @@ function registerRoutes(app) {
         }
     });
     // Update batch
-    app.put("/api/assets/:assetId/batches/:batchId", async (req, res) => {
+    app.put("/api/assets/:assetId/batches/:batchId", requireAssignPermission, async (req, res) => {
         try {
             const assetId = Number(req.params.assetId);
             const batchId = Number(req.params.batchId);
@@ -1959,7 +2007,7 @@ function registerRoutes(app) {
         }
     });
     // Delete batch (only if not used)
-    app.delete("/api/assets/:assetId/batches/:batchId", async (req, res) => {
+    app.delete("/api/assets/:assetId/batches/:batchId", requireAssignPermission, async (req, res) => {
         try {
             const assetId = Number(req.params.assetId);
             const batchId = Number(req.params.batchId);
@@ -2004,6 +2052,84 @@ function registerRoutes(app) {
         }
         catch (e) {
             return res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    // ---------------- ACCOUNTS MANAGEMENT (Admin Only) ----------------
+    // Get all users (admin only)
+    app.get("/api/accounts", requireRole(['admin']), async (_req, res) => {
+        try {
+            const { data, error } = await supabaseClient_1.supabase
+                .from("users")
+                .select("id, username, role, created_at")
+                .order("created_at", { ascending: false });
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.json(data || []);
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    // Create new user account (admin only)
+    app.post("/api/accounts", requireRole(['admin']), async (req, res) => {
+        try {
+            const { username, password, role } = req.body;
+            if (!username || !password) {
+                return res.status(400).json({ message: "Username and password are required" });
+            }
+            if (!role || !['admin', 'viewing_user', 'assigning_user'].includes(role)) {
+                return res.status(400).json({ message: "Valid role is required (admin, viewing_user, assigning_user)" });
+            }
+            // Check if username already exists
+            const { data: existingUser } = await supabaseClient_1.supabase
+                .from("users")
+                .select("id")
+                .eq("username", username)
+                .maybeSingle();
+            if (existingUser) {
+                return res.status(400).json({ message: "Username already exists" });
+            }
+            // Create user with plain password (stored as hash in DB, but we're storing plain for simplicity)
+            // In production, you should hash passwords properly
+            const { data, error } = await supabaseClient_1.supabase
+                .from("users")
+                .insert([{
+                    username,
+                    password_hash: password, // In production, hash this with bcrypt
+                    role,
+                }])
+                .select("id, username, role, created_at")
+                .maybeSingle();
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.status(201).json(data);
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    // Delete user account (admin only)
+    app.delete("/api/accounts/:id", requireRole(['admin']), async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            if (Number.isNaN(id)) {
+                return res.status(400).json({ message: "Invalid user ID" });
+            }
+            // Prevent deleting yourself
+            const currentUser = req.user;
+            if (currentUser && currentUser.id === id) {
+                return res.status(400).json({ message: "Cannot delete your own account" });
+            }
+            const { error } = await supabaseClient_1.supabase
+                .from("users")
+                .delete()
+                .eq("id", id);
+            if (error)
+                return res.status(500).json({ message: error.message });
+            res.status(204).send();
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
 }
