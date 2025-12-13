@@ -1063,7 +1063,8 @@ export function registerRoutes(app: Express) {
       if (!Array.isArray(items) || items.length === 0)
         return res.status(400).json({ message: "items array with at least one item is required" });
 
-      // Validate items and check batch availability
+      // Validate items and check employee-specific availability
+      // Employee assignments are tracked separately from station assignments
       const batchCounts = new Map<number, number>();
       for (const item of items) {
         const batchId = Number(item?.batch_id);
@@ -1072,20 +1073,37 @@ export function registerRoutes(app: Express) {
         batchCounts.set(batchId, (batchCounts.get(batchId) || 0) + 1);
       }
 
-      // Check batch availability
+      // Check employee-specific availability for each batch
       for (const [batchId, requestedCount] of batchCounts.entries()) {
+        // Get batch info
         const { data: batch, error: batchError } = await supabase
           .from("asset_purchase_batches")
-          .select("remaining_quantity")
+          .select("id, quantity")
           .eq("id", batchId)
           .maybeSingle();
 
         if (batchError || !batch)
           return res.status(404).json({ message: `Batch ${batchId} not found` });
-        if (batch.remaining_quantity < requestedCount)
+        
+        // Count how many items from this batch are already assigned to employees
+        const { count: employeeAssignedCount, error: countError } = await supabase
+          .from("employee_asset_assignments")
+          .select("*", { count: "exact", head: true })
+          .eq("batch_id", batchId);
+        
+        if (countError) {
+          console.error("Error counting employee assignments:", countError);
+          return res.status(500).json({ message: "Failed to check batch availability" });
+        }
+        
+        const alreadyAssignedToEmployees = employeeAssignedCount || 0;
+        const employeeRemaining = Number(batch.quantity) - alreadyAssignedToEmployees;
+        
+        if (requestedCount > employeeRemaining) {
           return res.status(400).json({ 
-            message: `Insufficient quantity in batch ${batchId}. Only ${batch.remaining_quantity} available, but ${requestedCount} requested.` 
+            message: `Insufficient quantity in batch ${batchId} for employee assignment. Only ${employeeRemaining} available for employees (${alreadyAssignedToEmployees} already assigned to employees, ${batch.quantity} total in batch), but ${requestedCount} requested.` 
           });
+        }
       }
 
       // Create assignment records (one per item)
@@ -2044,7 +2062,38 @@ export function registerRoutes(app: Express) {
         .order("purchase_date", { ascending: true });
 
       if (error) return res.status(500).json({ message: error.message });
-      return res.json(data || []);
+      
+      // Get employee assignment counts per batch
+      const batchIds = (data || []).map((b: any) => b.id);
+      let employeeAssignmentCounts = new Map<number, number>();
+      
+      if (batchIds.length > 0) {
+        const { data: employeeAssignments } = await supabase
+          .from("employee_asset_assignments")
+          .select("batch_id")
+          .in("batch_id", batchIds);
+        
+        if (employeeAssignments) {
+          employeeAssignments.forEach((assignment: any) => {
+            const count = employeeAssignmentCounts.get(assignment.batch_id) || 0;
+            employeeAssignmentCounts.set(assignment.batch_id, count + 1);
+          });
+        }
+      }
+      
+      // Enrich batches with employee assignment counts
+      const enrichedBatches = (data || []).map((batch: any) => {
+        const employeeAssignedCount = employeeAssignmentCounts.get(batch.id) || 0;
+        const employeeRemainingQuantity = Number(batch.quantity) - employeeAssignedCount;
+        
+        return {
+          ...batch,
+          employee_assigned_count: employeeAssignedCount,
+          employee_remaining_quantity: employeeRemainingQuantity,
+        };
+      });
+      
+      return res.json(enrichedBatches);
     } catch (e: any) {
       return res.status(500).json({ message: e?.message || "Internal error" });
     }
