@@ -54,6 +54,8 @@ function registerRoutes(app) {
         const user = req.user;
         return user && user.role === 'admin';
     };
+    // Middleware to require admin permissions only
+    const requireAdminPermission = requireRole(['admin']);
     // Middleware to require assignment permissions (admin or assigning_user)
     const requireAssignPermission = requireRole(['admin', 'assigning_user']);
     // Middleware to require any authenticated user (for viewing)
@@ -643,7 +645,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.post("/api/pumps", requireAssignPermission, async (req, res) => {
+    app.post("/api/pumps", requireAdminPermission, async (req, res) => {
         const name = req.body?.name;
         const location = req.body?.location;
         const manager = req.body?.manager;
@@ -660,7 +662,7 @@ function registerRoutes(app) {
             return res.status(500).json({ message: error.message });
         return res.status(201).json(data);
     });
-    app.put("/api/pumps/:id", requireAssignPermission, async (req, res) => {
+    app.put("/api/pumps/:id", requireAdminPermission, async (req, res) => {
         const id = Number(req.params.id);
         const body = req.body || {};
         const payload = {};
@@ -689,7 +691,7 @@ function registerRoutes(app) {
         res.json(data);
     });
     // Prevent deletion if assets exist
-    app.delete("/api/pumps/:id", requireAssignPermission, async (req, res) => {
+    app.delete("/api/pumps/:id", requireAdminPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -728,7 +730,7 @@ function registerRoutes(app) {
             return res.status(500).json({ message: error.message });
         return res.json(data);
     });
-    app.post("/api/categories", requireAssignPermission, async (req, res) => {
+    app.post("/api/categories", requireAdminPermission, async (req, res) => {
         const { name } = req.body;
         if (!name)
             return res.status(400).json({ message: "Category name required" });
@@ -741,7 +743,7 @@ function registerRoutes(app) {
             return res.status(500).json({ message: error.message });
         return res.status(201).json(data);
     });
-    app.delete("/api/categories/:id", requireAssignPermission, async (req, res) => {
+    app.delete("/api/categories/:id", requireAdminPermission, async (req, res) => {
         const { id } = req.params;
         const { error } = await supabaseClient_1.supabase.from("categories").delete().eq("id", id);
         if (error)
@@ -845,7 +847,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.post("/api/employees", requireAssignPermission, async (req, res) => {
+    app.post("/api/employees", requireAdminPermission, async (req, res) => {
         try {
             const { name, employee_id, department_id } = req.body;
             if (!name || typeof name !== "string" || !name.trim())
@@ -879,7 +881,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.put("/api/employees/:id", requireAssignPermission, async (req, res) => {
+    app.put("/api/employees/:id", requireAdminPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -906,7 +908,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.delete("/api/employees/:id", requireAssignPermission, async (req, res) => {
+    app.delete("/api/employees/:id", requireAdminPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1263,7 +1265,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.post("/api/departments", requireAssignPermission, async (req, res) => {
+    app.post("/api/departments", requireAdminPermission, async (req, res) => {
         try {
             const { name, manager } = req.body;
             if (!name || typeof name !== "string" || !name.trim())
@@ -1283,7 +1285,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.put("/api/departments/:id", requireAssignPermission, async (req, res) => {
+    app.put("/api/departments/:id", requireAdminPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1312,7 +1314,7 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
-    app.delete("/api/departments/:id", requireAssignPermission, async (req, res) => {
+    app.delete("/api/departments/:id", requireAdminPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1445,7 +1447,7 @@ function registerRoutes(app) {
         }
     });
     // ✅ CREATE ASSET — supports asset_value and purchase batches
-    app.post("/api/assets", requireAssignPermission, async (req, res) => {
+    app.post("/api/assets", requireAdminPermission, async (req, res) => {
         try {
             const b = req.body || {};
             const asset_name = b.asset_name ?? b.assetName ?? null;
@@ -1506,7 +1508,7 @@ function registerRoutes(app) {
         }
     });
     // ✅ UPDATE ASSET — supports asset_value
-    app.put("/api/assets/:id", requireAssignPermission, async (req, res) => {
+    app.put("/api/assets/:id", requireAdminPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1598,7 +1600,7 @@ function registerRoutes(app) {
         }
     });
     // DELETE ASSET
-    app.delete("/api/assets/:id", requireAssignPermission, async (req, res) => {
+    app.delete("/api/assets/:id", requireAdminPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1928,7 +1930,7 @@ function registerRoutes(app) {
         }
     });
     // Add new batch (inventory) to existing asset
-    app.post("/api/assets/:id/batches", requireAssignPermission, async (req, res) => {
+    app.post("/api/assets/:id/batches", requireAdminPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
             if (Number.isNaN(id))
@@ -1964,7 +1966,7 @@ function registerRoutes(app) {
         }
     });
     // Update batch
-    app.put("/api/assets/:assetId/batches/:batchId", requireAssignPermission, async (req, res) => {
+    app.put("/api/assets/:assetId/batches/:batchId", requireAdminPermission, async (req, res) => {
         try {
             const assetId = Number(req.params.assetId);
             const batchId = Number(req.params.batchId);
@@ -2007,7 +2009,7 @@ function registerRoutes(app) {
         }
     });
     // Delete batch (only if not used)
-    app.delete("/api/assets/:assetId/batches/:batchId", requireAssignPermission, async (req, res) => {
+    app.delete("/api/assets/:assetId/batches/:batchId", requireAdminPermission, async (req, res) => {
         try {
             const assetId = Number(req.params.assetId);
             const batchId = Number(req.params.batchId);

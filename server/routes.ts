@@ -60,6 +60,9 @@ export function registerRoutes(app: Express) {
     return user && user.role === 'admin';
   };
 
+  // Middleware to require admin permissions only
+  const requireAdminPermission = requireRole(['admin']);
+
   // Middleware to require assignment permissions (admin or assigning_user)
   const requireAssignPermission = requireRole(['admin', 'assigning_user']);
 
@@ -781,7 +784,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.post("/api/pumps", requireAssignPermission, async (req, res) => {
+  app.post("/api/pumps", requireAdminPermission, async (req, res) => {
     const name = req.body?.name;
     const location = req.body?.location;
     const manager = req.body?.manager;
@@ -801,7 +804,7 @@ export function registerRoutes(app: Express) {
     return res.status(201).json(data);
   });
 
-  app.put("/api/pumps/:id", requireAssignPermission, async (req, res) => {
+  app.put("/api/pumps/:id", requireAdminPermission, async (req, res) => {
     const id = Number(req.params.id);
     const body = req.body || {};
     const payload: Record<string, any> = {};
@@ -830,7 +833,7 @@ export function registerRoutes(app: Express) {
   });
 
   // Prevent deletion if assets exist
-  app.delete("/api/pumps/:id", requireAssignPermission, async (req, res) => {
+  app.delete("/api/pumps/:id", requireAdminPermission, async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (Number.isNaN(id))
@@ -874,7 +877,7 @@ export function registerRoutes(app: Express) {
     return res.json(data);
   });
 
-  app.post("/api/categories", requireAssignPermission, async (req, res) => {
+  app.post("/api/categories", requireAdminPermission, async (req, res) => {
     const { name } = req.body;
     if (!name)
       return res.status(400).json({ message: "Category name required" });
@@ -888,7 +891,7 @@ export function registerRoutes(app: Express) {
     return res.status(201).json(data);
   });
 
-  app.delete("/api/categories/:id", requireAssignPermission, async (req, res) => {
+  app.delete("/api/categories/:id", requireAdminPermission, async (req, res) => {
     const { id } = req.params;
     const { error } = await supabase.from("categories").delete().eq("id", id);
     if (error) return res.status(500).json({ message: error.message });
@@ -1011,7 +1014,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.post("/api/employees", requireAssignPermission, async (req, res) => {
+  app.post("/api/employees", requireAdminPermission, async (req, res) => {
     try {
       const { name, employee_id, department_id } = req.body;
       if (!name || typeof name !== "string" || !name.trim())
@@ -1048,7 +1051,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.put("/api/employees/:id", requireAssignPermission, async (req, res) => {
+  app.put("/api/employees/:id", requireAdminPermission, async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (Number.isNaN(id))
@@ -1074,7 +1077,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/employees/:id", requireAssignPermission, async (req, res) => {
+  app.delete("/api/employees/:id", requireAdminPermission, async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (Number.isNaN(id))
@@ -1472,7 +1475,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.post("/api/departments", requireAssignPermission, async (req, res) => {
+  app.post("/api/departments", requireAdminPermission, async (req, res) => {
     try {
       const { name, manager } = req.body;
       if (!name || typeof name !== "string" || !name.trim())
@@ -1493,7 +1496,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.put("/api/departments/:id", requireAssignPermission, async (req, res) => {
+  app.put("/api/departments/:id", requireAdminPermission, async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (Number.isNaN(id))
@@ -1522,7 +1525,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/departments/:id", requireAssignPermission, async (req, res) => {
+  app.delete("/api/departments/:id", requireAdminPermission, async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (Number.isNaN(id))
@@ -1669,7 +1672,7 @@ export function registerRoutes(app: Express) {
   });
 
   // ✅ CREATE ASSET — supports asset_value and purchase batches
-  app.post("/api/assets", requireAssignPermission, async (req, res) => {
+  app.post("/api/assets", requireAdminPermission, async (req, res) => {
     try {
       const b = req.body || {};
       const asset_name = b.asset_name ?? b.assetName ?? null;
@@ -1741,7 +1744,7 @@ export function registerRoutes(app: Express) {
   });
 
   // ✅ UPDATE ASSET — supports asset_value
-  app.put("/api/assets/:id", requireAssignPermission, async (req, res) => {
+  app.put("/api/assets/:id", requireAdminPermission, async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (Number.isNaN(id))
@@ -1839,7 +1842,7 @@ export function registerRoutes(app: Express) {
   });
 
   // DELETE ASSET
-  app.delete("/api/assets/:id", requireAssignPermission, async (req, res) => {
+  app.delete("/api/assets/:id", requireAdminPermission, async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (Number.isNaN(id))
@@ -2219,7 +2222,7 @@ export function registerRoutes(app: Express) {
   });
 
   // Add new batch (inventory) to existing asset
-  app.post("/api/assets/:id/batches", requireAssignPermission, async (req, res) => {
+  app.post("/api/assets/:id/batches", requireAdminPermission, async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (Number.isNaN(id))
@@ -2267,7 +2270,7 @@ export function registerRoutes(app: Express) {
   });
 
   // Update batch
-  app.put("/api/assets/:assetId/batches/:batchId", requireAssignPermission, async (req, res) => {
+  app.put("/api/assets/:assetId/batches/:batchId", requireAdminPermission, async (req, res) => {
     try {
       const assetId = Number(req.params.assetId);
       const batchId = Number(req.params.batchId);
@@ -2314,7 +2317,7 @@ export function registerRoutes(app: Express) {
   });
 
   // Delete batch (only if not used)
-  app.delete("/api/assets/:assetId/batches/:batchId", requireAssignPermission, async (req, res) => {
+  app.delete("/api/assets/:assetId/batches/:batchId", requireAdminPermission, async (req, res) => {
     try {
       const assetId = Number(req.params.assetId);
       const batchId = Number(req.params.batchId);
