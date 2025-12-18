@@ -140,7 +140,7 @@ export function registerRoutes(app: Express) {
       assignmentIds.length > 0
         ? await supabase
             .from("assignment_batch_allocations")
-            .select("assignment_id, batch_id, serial_number, barcode, asset_purchase_batches(id, batch_name, purchase_date, purchase_price)")
+            .select("id, assignment_id, batch_id, serial_number, barcode, asset_purchase_batches(id, batch_name, purchase_date, purchase_price)")
             .in("assignment_id", assignmentIds)
         : { data: [], error: null };
 
@@ -169,7 +169,7 @@ export function registerRoutes(app: Express) {
       const batch = alloc.asset_purchase_batches;
       // Add each allocation as a separate item to preserve serial_number and other individual data
       collection.push({
-        id: alloc.id || alloc.assignment_id + '_' + alloc.batch_id + '_' + collection.length, // Generate ID if not present
+        id: alloc.id, // Use the actual allocation ID from the database
         batch_id: alloc.batch_id,
         quantity: 1, // Each allocation = 1 item
         unit_price: Number(batch?.purchase_price || 0),
