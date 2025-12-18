@@ -125,7 +125,7 @@ export function registerRoutes(app: Express) {
       supabase.from("pumps").select("id, name"),
       supabase
         .from("asset_assignments")
-        .select("id, asset_id, pump_id, quantity, pumps(name)")
+        .select("id, asset_id, pump_id, quantity, assignment_date, pumps(name)")
         .in("asset_id", assetIds),
       supabase
         .from("asset_purchase_batches")
@@ -195,14 +195,20 @@ export function registerRoutes(app: Express) {
       const collection = assignmentsByAsset.get(row.asset_id) || [];
       const batchAllocations = allocationsByAssignment.get(row.id) || [];
       
+      // Add assignment_date to each batch allocation
+      const batchAllocationsWithDate = batchAllocations.map((alloc: any) => ({
+        ...alloc,
+        assignment_date: row.assignment_date || null,
+      }));
+      
       // Calculate quantity from batch allocations (count of items)
-      const calculatedQuantity = batchAllocations.reduce((sum: number, alloc: any) => sum + (alloc.quantity || 0), 0);
+      const calculatedQuantity = batchAllocationsWithDate.reduce((sum: number, alloc: any) => sum + (alloc.quantity || 0), 0);
       const assignmentQuantity = calculatedQuantity > 0 ? calculatedQuantity : (row.quantity || 0);
       
       // Calculate assignment value from batch allocations
       // Each allocation in batchAllocations has quantity (count of items) and unit_price
-      const assignmentValue = batchAllocations.length > 0
-        ? batchAllocations.reduce((sum: number, alloc: any) => sum + (alloc.quantity || 0) * (alloc.unit_price || 0), 0)
+      const assignmentValue = batchAllocationsWithDate.length > 0
+        ? batchAllocationsWithDate.reduce((sum: number, alloc: any) => sum + (alloc.quantity || 0) * (alloc.unit_price || 0), 0)
         : assignmentQuantity * (Number(assets.find((a: any) => a.id === row.asset_id)?.asset_value) || 0);
 
       collection.push({
@@ -212,7 +218,8 @@ export function registerRoutes(app: Express) {
         quantity: assignmentQuantity, // Use calculated quantity from allocations
         pump_name: row.pumps?.name ?? pumpMap.get(row.pump_id) ?? null,
         assignment_value: assignmentValue,
-        batch_allocations: batchAllocations,
+        assignment_date: row.assignment_date || null,
+        batch_allocations: batchAllocationsWithDate,
       });
       assignmentsByAsset.set(row.asset_id, collection);
     });
