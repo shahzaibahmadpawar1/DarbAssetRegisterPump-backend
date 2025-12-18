@@ -99,7 +99,7 @@ function registerRoutes(app) {
             supabaseClient_1.supabase.from("pumps").select("id, name"),
             supabaseClient_1.supabase
                 .from("asset_assignments")
-                .select("id, asset_id, pump_id, quantity, assignment_date, pumps(name)")
+                .select("id, asset_id, pump_id, quantity, created_at, pumps(name)")
                 .in("asset_id", assetIds),
             supabaseClient_1.supabase
                 .from("asset_purchase_batches")
@@ -190,10 +190,10 @@ function registerRoutes(app) {
         (assignmentRows || []).forEach((row) => {
             const collection = assignmentsByAsset.get(row.asset_id) || [];
             const batchAllocations = allocationsByAssignment.get(row.id) || [];
-            // Add assignment_date to each batch allocation
+            // Add assignment_date to each batch allocation (use created_at as assignment date for station assignments)
             const batchAllocationsWithDate = batchAllocations.map((alloc) => ({
                 ...alloc,
-                assignment_date: row.assignment_date || null,
+                assignment_date: row.created_at || null, // Use created_at since assignment_date doesn't exist in asset_assignments
             }));
             // Calculate quantity from batch allocations (count of items)
             const calculatedQuantity = batchAllocationsWithDate.reduce((sum, alloc) => sum + (alloc.quantity || 0), 0);
@@ -210,7 +210,7 @@ function registerRoutes(app) {
                 quantity: assignmentQuantity, // Use calculated quantity from allocations
                 pump_name: row.pumps?.name ?? pumpMap.get(row.pump_id) ?? null,
                 assignment_value: assignmentValue,
-                assignment_date: row.assignment_date || null,
+                assignment_date: row.created_at || null, // Use created_at since assignment_date doesn't exist in asset_assignments
                 batch_allocations: batchAllocationsWithDate,
             });
             assignmentsByAsset.set(row.asset_id, collection);
@@ -338,12 +338,11 @@ function registerRoutes(app) {
             }
         }
         // Create assignment records (one per pump)
-        const assignmentDate = new Date().toISOString();
+        // Note: asset_assignments table doesn't have assignment_date column, so we don't set it
         const assignmentRows = Array.from(groupedByPump.entries()).map(([pump_id, items]) => ({
             asset_id: assetId,
             pump_id,
             quantity: items.length, // Store total count for compatibility
-            assignment_date: assignmentDate, // Set assignment date to current date
         }));
         const { data: insertedAssignments, error: insertError } = await supabaseClient_1.supabase
             .from("asset_assignments")
