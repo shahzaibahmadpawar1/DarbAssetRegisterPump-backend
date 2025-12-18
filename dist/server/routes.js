@@ -109,12 +109,42 @@ function registerRoutes(app) {
         // Fetch batch allocations separately after we have assignment IDs
         // Each allocation is now one item (no quantity field)
         const assignmentIds = (assignmentRows || []).map((r) => r.id);
-        const { data: allocationRows, error: allocationError } = assignmentIds.length > 0
-            ? await supabaseClient_1.supabase
+        let allocationRows = [];
+        let allocationError = null;
+        if (assignmentIds.length > 0) {
+            // First fetch allocations
+            const { data: allocs, error: allocErr } = await supabaseClient_1.supabase
                 .from("assignment_batch_allocations")
-                .select("id, assignment_id, batch_id, serial_number, barcode, asset_purchase_batches(id, batch_name, purchase_date, purchase_price)")
-                .in("assignment_id", assignmentIds)
-            : { data: [], error: null };
+                .select("id, assignment_id, batch_id, serial_number, barcode")
+                .in("assignment_id", assignmentIds);
+            if (allocErr) {
+                allocationError = allocErr;
+            }
+            else if (allocs && allocs.length > 0) {
+                // Then fetch batches for these allocations
+                const batchIds = Array.from(new Set(allocs.map((a) => a.batch_id).filter((id) => id != null)));
+                if (batchIds.length > 0) {
+                    const { data: batchData, error: batchErr } = await supabaseClient_1.supabase
+                        .from("asset_purchase_batches")
+                        .select("id, batch_name, purchase_date, purchase_price")
+                        .in("id", batchIds);
+                    if (batchErr) {
+                        allocationError = batchErr;
+                    }
+                    else {
+                        // Join allocations with batches
+                        const batchMap = new Map((batchData || []).map((b) => [b.id, b]));
+                        allocationRows = (allocs || []).map((alloc) => ({
+                            ...alloc,
+                            asset_purchase_batches: batchMap.get(alloc.batch_id) || null,
+                        }));
+                    }
+                }
+                else {
+                    allocationRows = allocs || [];
+                }
+            }
+        }
         if (catError || pumpError || assignmentError || batchError || allocationError) {
             return {
                 data: null,

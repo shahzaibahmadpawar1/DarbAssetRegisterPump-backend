@@ -136,13 +136,42 @@ export function registerRoutes(app: Express) {
     // Fetch batch allocations separately after we have assignment IDs
     // Each allocation is now one item (no quantity field)
     const assignmentIds = (assignmentRows || []).map((r: any) => r.id);
-    const { data: allocationRows, error: allocationError } =
-      assignmentIds.length > 0
-        ? await supabase
-            .from("assignment_batch_allocations")
-            .select("id, assignment_id, batch_id, serial_number, barcode, asset_purchase_batches(id, batch_name, purchase_date, purchase_price)")
-            .in("assignment_id", assignmentIds)
-        : { data: [], error: null };
+    let allocationRows: any[] = [];
+    let allocationError: any = null;
+    
+    if (assignmentIds.length > 0) {
+      // First fetch allocations
+      const { data: allocs, error: allocErr } = await supabase
+        .from("assignment_batch_allocations")
+        .select("id, assignment_id, batch_id, serial_number, barcode")
+        .in("assignment_id", assignmentIds);
+      
+      if (allocErr) {
+        allocationError = allocErr;
+      } else if (allocs && allocs.length > 0) {
+        // Then fetch batches for these allocations
+        const batchIds = Array.from(new Set(allocs.map((a: any) => a.batch_id).filter((id: any) => id != null)));
+        if (batchIds.length > 0) {
+          const { data: batchData, error: batchErr } = await supabase
+            .from("asset_purchase_batches")
+            .select("id, batch_name, purchase_date, purchase_price")
+            .in("id", batchIds);
+          
+          if (batchErr) {
+            allocationError = batchErr;
+          } else {
+            // Join allocations with batches
+            const batchMap = new Map((batchData || []).map((b: any) => [b.id, b]));
+            allocationRows = (allocs || []).map((alloc: any) => ({
+              ...alloc,
+              asset_purchase_batches: batchMap.get(alloc.batch_id) || null,
+            }));
+          }
+        } else {
+          allocationRows = allocs || [];
+        }
+      }
+    }
 
     if (catError || pumpError || assignmentError || batchError || allocationError) {
       return {
