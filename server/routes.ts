@@ -167,8 +167,15 @@ export function registerRoutes(app: Express) {
     (allocationRows || []).forEach((alloc: any) => {
       const collection = allocationsByAssignment.get(alloc.assignment_id) || [];
       const batch = alloc.asset_purchase_batches;
-      // Check if we already have an entry for this batch_id
-      const existing = collection.find((item: any) => item.batch_id === alloc.batch_id);
+
+      // We should only group items if they are chemically identical (same batch) AND have NO serial number/barcode.
+      // If they have serial number or barcode, they are distinct items.
+      const isSerialized = !!(alloc.serial_number || alloc.barcode);
+
+      const existing = !isSerialized
+        ? collection.find((item: any) => item.batch_id === alloc.batch_id && !item.serial_number && !item.barcode)
+        : null;
+
       if (existing) {
         existing.quantity = (existing.quantity || 0) + 1;
       } else {
