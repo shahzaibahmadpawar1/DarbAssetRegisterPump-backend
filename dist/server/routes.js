@@ -133,24 +133,28 @@ function registerRoutes(app) {
         // Store each allocation as a separate item to preserve individual assignment dates
         // Each allocation row is now one item (no quantity field)
         (allocationRows || []).forEach((alloc) => {
+            if (!alloc || !alloc.assignment_id)
+                return; // Skip invalid allocations
             const collection = allocationsByAssignment.get(alloc.assignment_id) || [];
             const batch = alloc.asset_purchase_batches;
-            // Add each allocation as a separate item to preserve serial_number and other individual data
-            collection.push({
-                id: alloc.id, // Use the actual allocation ID from the database
-                batch_id: alloc.batch_id,
-                quantity: 1, // Each allocation = 1 item
-                unit_price: Number(batch?.purchase_price || 0),
-                serial_number: alloc.serial_number,
-                barcode: alloc.barcode,
-                batch: batch ? {
-                    id: batch.id,
-                    batch_name: batch.batch_name,
-                    purchase_date: batch.purchase_date,
-                    purchase_price: Number(batch.purchase_price || 0),
-                } : null,
-            });
-            allocationsByAssignment.set(alloc.assignment_id, collection);
+            // Only add allocation if batch exists (batch is required)
+            if (batch && batch.id) {
+                collection.push({
+                    id: alloc.id || `${alloc.assignment_id}_${alloc.batch_id}_${collection.length}`, // Fallback ID if missing
+                    batch_id: alloc.batch_id,
+                    quantity: 1, // Each allocation = 1 item
+                    unit_price: Number(batch?.purchase_price || 0),
+                    serial_number: alloc.serial_number || null,
+                    barcode: alloc.barcode || null,
+                    batch: {
+                        id: batch.id,
+                        batch_name: batch.batch_name || null,
+                        purchase_date: batch.purchase_date || null,
+                        purchase_price: Number(batch.purchase_price || 0),
+                    },
+                });
+                allocationsByAssignment.set(alloc.assignment_id, collection);
+            }
         });
         const assignmentsByAsset = new Map();
         (assignmentRows || []).forEach((row) => {
@@ -1439,9 +1443,11 @@ function registerRoutes(app) {
             if (error)
                 return res.status(500).json({ message: error.message });
             const result = await hydrateAssets(data || []);
-            if (result.error)
-                return res.status(500).json({ message: result.error.message });
-            return res.json(result.data);
+            if (result.error) {
+                console.error("Error hydrating assets:", result.error);
+                return res.status(500).json({ message: result.error.message || "Failed to hydrate assets" });
+            }
+            return res.json(result.data || []);
         }
         catch (e) {
             return res
@@ -1810,8 +1816,10 @@ function registerRoutes(app) {
                 return res.status(500).json({ message: error.message });
             // 3. Hydrate with assignments and details
             const hydrated = await hydrateAssets(data || []);
-            if (hydrated.error)
-                return res.status(500).json({ message: hydrated.error.message });
+            if (hydrated.error) {
+                console.error("Error hydrating assets in assets-by-category report:", hydrated.error);
+                return res.status(500).json({ message: hydrated.error.message || "Failed to hydrate assets" });
+            }
             // 4. Filter top-level assets (Category/ID check)
             const filteredAssets = (hydrated.data || []).filter((asset) => {
                 if (category_id && category_id !== "all")
@@ -1870,9 +1878,11 @@ function registerRoutes(app) {
             if (error)
                 return res.status(500).json({ message: error.message });
             const hydrated = await hydrateAssets(data || []);
-            if (hydrated.error)
-                return res.status(500).json({ message: hydrated.error.message });
-            return res.json(hydrated.data);
+            if (hydrated.error) {
+                console.error("Error hydrating assets in reports:", hydrated.error);
+                return res.status(500).json({ message: hydrated.error.message || "Failed to hydrate assets" });
+            }
+            return res.json(hydrated.data || []);
         }
         catch (e) {
             return res.status(500).json({ message: e?.message || "Internal error" });
