@@ -162,30 +162,26 @@ export function registerRoutes(app: Express) {
       batchesByAsset.set(batch.asset_id, collection);
     });
 
-    // Group allocations by assignment_id and batch_id, counting items
+    // Store each allocation as a separate item to preserve individual assignment dates
     // Each allocation row is now one item (no quantity field)
     (allocationRows || []).forEach((alloc: any) => {
       const collection = allocationsByAssignment.get(alloc.assignment_id) || [];
       const batch = alloc.asset_purchase_batches;
-      // Check if we already have an entry for this batch_id
-      const existing = collection.find((item: any) => item.batch_id === alloc.batch_id);
-      if (existing) {
-        existing.quantity = (existing.quantity || 0) + 1;
-      } else {
-        collection.push({
-          batch_id: alloc.batch_id,
-          quantity: 1, // Each allocation = 1 item
-          unit_price: Number(batch?.purchase_price || 0),
-          serial_number: alloc.serial_number,
-          barcode: alloc.barcode,
-          batch: batch ? {
-            id: batch.id,
-            batch_name: batch.batch_name,
-            purchase_date: batch.purchase_date,
-            purchase_price: Number(batch.purchase_price || 0),
-          } : null,
-        });
-      }
+      // Add each allocation as a separate item to preserve serial_number and other individual data
+      collection.push({
+        id: alloc.id || alloc.assignment_id + '_' + alloc.batch_id + '_' + collection.length, // Generate ID if not present
+        batch_id: alloc.batch_id,
+        quantity: 1, // Each allocation = 1 item
+        unit_price: Number(batch?.purchase_price || 0),
+        serial_number: alloc.serial_number,
+        barcode: alloc.barcode,
+        batch: batch ? {
+          id: batch.id,
+          batch_name: batch.batch_name,
+          purchase_date: batch.purchase_date,
+          purchase_price: Number(batch.purchase_price || 0),
+        } : null,
+      });
       allocationsByAssignment.set(alloc.assignment_id, collection);
     });
 
@@ -384,10 +380,12 @@ export function registerRoutes(app: Express) {
     }
 
     // Create assignment records (one per pump)
+    const assignmentDate = new Date().toISOString();
     const assignmentRows = Array.from(groupedByPump.entries()).map(([pump_id, items]) => ({
       asset_id: assetId,
       pump_id,
       quantity: items.length, // Store total count for compatibility
+      assignment_date: assignmentDate, // Set assignment date to current date
     }));
 
     const { data: insertedAssignments, error: insertError } = await supabase
