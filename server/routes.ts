@@ -115,28 +115,57 @@ export function registerRoutes(app: Express) {
     if (!assets || assets.length === 0) return { data: [], error: null as any };
 
     const assetIds = assets.map((a: any) => a.id);
+    
     const [
       { data: cats, error: catError },
       { data: pumps, error: pumpError },
       { data: assignmentRows, error: assignmentError },
       { data: batchRows, error: batchError },
-      { data: employeeAssignmentRows, error: employeeAssignmentError },
     ] = await Promise.all([
       supabase.from("categories").select("id, name"),
       supabase.from("pumps").select("id, name"),
-      supabase
-        .from("asset_assignments")
-        .select("id, asset_id, pump_id, quantity, created_at, pumps(name)")
-        .in("asset_id", assetIds),
-      supabase
-        .from("asset_purchase_batches")
-        .select("*")
-        .in("asset_id", assetIds),
-      supabase
-        .from("employee_asset_assignments")
-        .select("id, asset_id, batch_id")
-        .in("asset_id", assetIds),
+      assetIds.length > 0
+        ? supabase
+            .from("asset_assignments")
+            .select("id, asset_id, pump_id, quantity, created_at, pumps(name)")
+            .in("asset_id", assetIds)
+        : Promise.resolve({ data: [], error: null }),
+      assetIds.length > 0
+        ? supabase
+            .from("asset_purchase_batches")
+            .select("*")
+            .in("asset_id", assetIds)
+        : Promise.resolve({ data: [], error: null }),
     ]);
+
+    // Fetch employee assignments separately after we have batches
+    // Note: employee_asset_assignments doesn't have asset_id directly, need to join through batches
+    let employeeAssignmentRows: any[] = [];
+    let employeeAssignmentError: any = null;
+    
+    if (assetIds.length > 0 && batchRows && batchRows.length > 0) {
+      try {
+        // Get all batch IDs for these assets
+        const batchIdsForAssets = batchRows.map((b: any) => b.id);
+        
+        if (batchIdsForAssets.length > 0) {
+          // Then fetch employee assignments for those batches
+          const { data, error } = await supabase
+            .from("employee_asset_assignments")
+            .select("id, batch_id, employee_id")
+            .in("batch_id", batchIdsForAssets);
+          if (error) {
+            employeeAssignmentError = error;
+            console.warn("Warning: Failed to fetch employee assignments:", error);
+          } else {
+            employeeAssignmentRows = data || [];
+          }
+        }
+      } catch (err: any) {
+        employeeAssignmentError = err;
+        console.warn("Warning: Failed to fetch employee assignments:", err);
+      }
+    }
 
     // Fetch batch allocations separately after we have assignment IDs
     // Each allocation is now one item (no quantity field)
@@ -178,10 +207,15 @@ export function registerRoutes(app: Express) {
       }
     }
 
-    if (catError || pumpError || assignmentError || batchError || allocationError || employeeAssignmentError) {
+    // Employee assignment errors are non-critical - if they fail, just treat as no employee assignments
+    if (employeeAssignmentError) {
+      console.warn("Warning: Failed to fetch employee assignments (non-critical):", employeeAssignmentError);
+    }
+
+    if (catError || pumpError || assignmentError || batchError || allocationError) {
       return {
         data: null,
-        error: catError || pumpError || assignmentError || batchError || allocationError || employeeAssignmentError,
+        error: catError || pumpError || assignmentError || batchError || allocationError,
       };
     }
 
@@ -286,7 +320,18 @@ export function registerRoutes(app: Express) {
       );
       
       // Calculate total assigned to employees
-      const employeeAssignmentsForAsset = (employeeAssignmentRows || []).filter((ea: any) => ea.asset_id === asset.id);
+      // Employee assignments are linked to assets through batches
+      // Create a map of batch_id -> asset_id from the batches
+      const batchToAssetMap = new Map<number, number>();
+      batches.forEach((batch: any) => {
+        batchToAssetMap.set(batch.id, asset.id);
+      });
+      
+      // Filter employee assignments where the batch belongs to this asset
+      const employeeAssignmentsForAsset = (employeeAssignmentRows || []).filter((ea: any) => {
+        if (!ea || !ea.batch_id) return false;
+        return batchToAssetMap.get(ea.batch_id) === asset.id;
+      });
       const totalAssignedToEmployees = employeeAssignmentsForAsset.length;
       
       // Total assigned (stations + employees) for backward compatibility
@@ -1713,7 +1758,13 @@ export function registerRoutes(app: Express) {
       const result = await hydrateAssets(data || []);
       if (result.error) {
         console.error("Error hydrating assets:", result.error);
+        console.error("Error details:", JSON.stringify(result.error, null, 2));
         return res.status(500).json({ message: result.error.message || "Failed to hydrate assets" });
+      }
+
+      if (!result.data) {
+        console.error("hydrateAssets returned null data");
+        return res.status(500).json({ message: "Failed to load assets data" });
       }
 
       return res.json(result.data || []);
