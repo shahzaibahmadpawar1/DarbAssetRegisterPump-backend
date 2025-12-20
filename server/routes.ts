@@ -120,6 +120,7 @@ export function registerRoutes(app: Express) {
       { data: pumps, error: pumpError },
       { data: assignmentRows, error: assignmentError },
       { data: batchRows, error: batchError },
+      { data: employeeAssignmentRows, error: employeeAssignmentError },
     ] = await Promise.all([
       supabase.from("categories").select("id, name"),
       supabase.from("pumps").select("id, name"),
@@ -130,6 +131,10 @@ export function registerRoutes(app: Express) {
       supabase
         .from("asset_purchase_batches")
         .select("*")
+        .in("asset_id", assetIds),
+      supabase
+        .from("employee_asset_assignments")
+        .select("id, asset_id, batch_id")
         .in("asset_id", assetIds),
     ]);
 
@@ -173,10 +178,10 @@ export function registerRoutes(app: Express) {
       }
     }
 
-    if (catError || pumpError || assignmentError || batchError || allocationError) {
+    if (catError || pumpError || assignmentError || batchError || allocationError || employeeAssignmentError) {
       return {
         data: null,
-        error: catError || pumpError || assignmentError || batchError || allocationError,
+        error: catError || pumpError || assignmentError || batchError || allocationError || employeeAssignmentError,
       };
     }
 
@@ -268,8 +273,8 @@ export function registerRoutes(app: Express) {
         0
       );
 
-      // Calculate total assigned by counting items in batch_allocations
-      const totalAssigned = assignmentList.reduce(
+      // Calculate total assigned to stations by counting items in batch_allocations
+      const totalAssignedToStations = assignmentList.reduce(
         (total: number, assignment: any) => {
           if (assignment.batch_allocations && assignment.batch_allocations.length > 0) {
             // Sum up quantities from batch allocations
@@ -279,6 +284,14 @@ export function registerRoutes(app: Express) {
         },
         0
       );
+      
+      // Calculate total assigned to employees
+      const employeeAssignmentsForAsset = (employeeAssignmentRows || []).filter((ea: any) => ea.asset_id === asset.id);
+      const totalAssignedToEmployees = employeeAssignmentsForAsset.length;
+      
+      // Total assigned (stations + employees) for backward compatibility
+      const totalAssigned = totalAssignedToStations + totalAssignedToEmployees;
+      
       const totalAssignedValue = assignmentList.reduce(
         (total: number, assignment: any) =>
           total + (assignment.assignment_value || 0),
@@ -313,7 +326,9 @@ export function registerRoutes(app: Express) {
           quantity: Number(b.quantity),
           remaining_quantity: Number(b.remaining_quantity),
         })),
-        totalAssigned,
+        totalAssigned, // Total (stations + employees) for backward compatibility
+        totalAssignedToStations, // New: Only station assignments
+        totalAssignedToEmployees, // New: Only employee assignments
         totalAssignedValue,
         totalValue: totalBatchValue || (asset.quantity ? asset.quantity * unitValue : null),
         remainingQuantity: remainingQuantity || (asset.quantity ? Math.max((asset.quantity || 0) - totalAssigned, 0) : null),

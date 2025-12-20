@@ -94,7 +94,7 @@ function registerRoutes(app) {
         if (!assets || assets.length === 0)
             return { data: [], error: null };
         const assetIds = assets.map((a) => a.id);
-        const [{ data: cats, error: catError }, { data: pumps, error: pumpError }, { data: assignmentRows, error: assignmentError }, { data: batchRows, error: batchError },] = await Promise.all([
+        const [{ data: cats, error: catError }, { data: pumps, error: pumpError }, { data: assignmentRows, error: assignmentError }, { data: batchRows, error: batchError }, { data: employeeAssignmentRows, error: employeeAssignmentError },] = await Promise.all([
             supabaseClient_1.supabase.from("categories").select("id, name"),
             supabaseClient_1.supabase.from("pumps").select("id, name"),
             supabaseClient_1.supabase
@@ -104,6 +104,10 @@ function registerRoutes(app) {
             supabaseClient_1.supabase
                 .from("asset_purchase_batches")
                 .select("*")
+                .in("asset_id", assetIds),
+            supabaseClient_1.supabase
+                .from("employee_asset_assignments")
+                .select("id, asset_id, batch_id")
                 .in("asset_id", assetIds),
         ]);
         // Fetch batch allocations separately after we have assignment IDs
@@ -145,10 +149,10 @@ function registerRoutes(app) {
                 }
             }
         }
-        if (catError || pumpError || assignmentError || batchError || allocationError) {
+        if (catError || pumpError || assignmentError || batchError || allocationError || employeeAssignmentError) {
             return {
                 data: null,
-                error: catError || pumpError || assignmentError || batchError || allocationError,
+                error: catError || pumpError || assignmentError || batchError || allocationError || employeeAssignmentError,
             };
         }
         const catMap = new Map((cats || []).map((c) => [c.id, c.name]));
@@ -221,14 +225,19 @@ function registerRoutes(app) {
             // Calculate total value from batches
             const totalBatchValue = batches.reduce((sum, batch) => sum + Number(batch.purchase_price) * Number(batch.quantity), 0);
             const remainingBatchValue = batches.reduce((sum, batch) => sum + Number(batch.purchase_price) * Number(batch.remaining_quantity), 0);
-            // Calculate total assigned by counting items in batch_allocations
-            const totalAssigned = assignmentList.reduce((total, assignment) => {
+            // Calculate total assigned to stations by counting items in batch_allocations
+            const totalAssignedToStations = assignmentList.reduce((total, assignment) => {
                 if (assignment.batch_allocations && assignment.batch_allocations.length > 0) {
                     // Sum up quantities from batch allocations
                     return total + assignment.batch_allocations.reduce((sum, alloc) => sum + (alloc.quantity || 0), 0);
                 }
                 return total + (assignment.quantity || 0);
             }, 0);
+            // Calculate total assigned to employees
+            const employeeAssignmentsForAsset = (employeeAssignmentRows || []).filter((ea) => ea.asset_id === asset.id);
+            const totalAssignedToEmployees = employeeAssignmentsForAsset.length;
+            // Total assigned (stations + employees) for backward compatibility
+            const totalAssigned = totalAssignedToStations + totalAssignedToEmployees;
             const totalAssignedValue = assignmentList.reduce((total, assignment) => total + (assignment.assignment_value || 0), 0);
             const totalQuantity = batches.reduce((sum, batch) => sum + Number(batch.quantity), 0);
             const remainingQuantity = batches.reduce((sum, batch) => sum + Number(batch.remaining_quantity), 0);
@@ -250,7 +259,9 @@ function registerRoutes(app) {
                     quantity: Number(b.quantity),
                     remaining_quantity: Number(b.remaining_quantity),
                 })),
-                totalAssigned,
+                totalAssigned, // Total (stations + employees) for backward compatibility
+                totalAssignedToStations, // New: Only station assignments
+                totalAssignedToEmployees, // New: Only employee assignments
                 totalAssignedValue,
                 totalValue: totalBatchValue || (asset.quantity ? asset.quantity * unitValue : null),
                 remainingQuantity: remainingQuantity || (asset.quantity ? Math.max((asset.quantity || 0) - totalAssigned, 0) : null),
