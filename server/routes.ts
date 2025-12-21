@@ -158,11 +158,12 @@ export function registerRoutes(app: Express) {
         const batchIdsForAssets = batchRows.map((b: any) => b.id);
         
         if (batchIdsForAssets.length > 0) {
-          // Then fetch employee assignments for those batches
+          // Then fetch employee assignments for those batches (only active)
           const { data, error } = await supabase
             .from("employee_asset_assignments")
-            .select("id, batch_id, employee_id")
-            .in("batch_id", batchIdsForAssets);
+            .select("id, batch_id, employee_id, is_active")
+            .in("batch_id", batchIdsForAssets)
+            .eq("is_active", true);
           if (error) {
             employeeAssignmentError = error;
             console.warn("Warning: Failed to fetch employee assignments:", error);
@@ -1256,6 +1257,7 @@ export function registerRoutes(app: Express) {
           )
         `)
         .eq("employee_id", employeeId)
+        .eq("is_active", true)  // Only get active assignments
         .order("assignment_date", { ascending: false });
 
       if (error) return res.status(500).json({ message: error.message });
@@ -1298,11 +1300,12 @@ export function registerRoutes(app: Express) {
         if (batchError || !batch)
           return res.status(404).json({ message: `Batch ${batchId} not found` });
         
-        // Count how many items from this batch are already assigned to employees
+        // Count how many items from this batch are already assigned to employees (only active)
         const { count: employeeAssignedCount, error: countError } = await supabase
           .from("employee_asset_assignments")
           .select("*", { count: "exact", head: true })
-          .eq("batch_id", batchId);
+          .eq("batch_id", batchId)
+          .eq("is_active", true);
         
         if (countError) {
           console.error("Error counting employee assignments:", countError);
@@ -1327,6 +1330,7 @@ export function registerRoutes(app: Express) {
         serial_number: item.serial_number?.trim() || null,
         barcode: item.barcode?.trim() || null,
         assignment_date: assignmentDate,
+        is_active: true,  // Ensure new assignments are active
       }));
 
       const { data, error } = await supabase
@@ -1373,13 +1377,81 @@ export function registerRoutes(app: Express) {
       if (Number.isNaN(assignmentId))
         return res.status(400).json({ message: "Invalid assignment ID" });
 
+      // Instead of deleting, mark as inactive to preserve history
       const { error } = await supabase
         .from("employee_asset_assignments")
-        .delete()
+        .update({ is_active: false })
         .eq("id", assignmentId);
 
       if (error) return res.status(500).json({ message: error.message });
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
+  // Get assignment history for a specific batch/asset
+  app.get("/api/assignments/history", requireAuth, async (req, res) => {
+    try {
+      const { batch_id, asset_id } = req.query;
+      
+      let query = supabase
+        .from("employee_asset_assignments")
+        .select(`
+          id,
+          employee_id,
+          batch_id,
+          quantity,
+          serial_number,
+          barcode,
+          assignment_date,
+          is_active,
+          created_at,
+          employee:employees(id, name, employee_id),
+          batch:asset_purchase_batches(
+            id,
+            asset_id,
+            purchase_price,
+            asset:assets(id, asset_name, asset_number)
+          )
+        `)
+        .order("assignment_date", { ascending: false });
+
+      // Filter by batch_id if provided
+      if (batch_id) {
+        const batchId = Number(batch_id);
+        if (!Number.isNaN(batchId)) {
+          query = query.eq("batch_id", batchId);
+        }
+      }
+
+      // Filter by asset_id if provided (through batch)
+      if (asset_id) {
+        const assetId = Number(asset_id);
+        if (!Number.isNaN(assetId)) {
+          // First get batch IDs for this asset
+          const { data: batches, error: batchError } = await supabase
+            .from("asset_purchase_batches")
+            .select("id")
+            .eq("asset_id", assetId);
+          
+          if (batchError) return res.status(500).json({ message: batchError.message });
+          
+          if (batches && batches.length > 0) {
+            const batchIds = batches.map((b: any) => b.id);
+            query = query.in("batch_id", batchIds);
+          } else {
+            // No batches found, return empty
+            return res.json([]);
+          }
+        }
+      }
+
+      const { data, error } = await query;
+
+      if (error) return res.status(500).json({ message: error.message });
+
+      res.json(data || []);
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Internal error" });
     }
@@ -1397,7 +1469,8 @@ export function registerRoutes(app: Express) {
       if (fromId === toId)
         return res.status(400).json({ message: "Cannot transfer assets to the same employee" });
 
-      const { assignment_ids } = req.body;
+      const { assignment_ids, transfer_date } = req.body;
+      const transferDate = transfer_date ? new Date(transfer_date).toISOString() : new Date().toISOString();
       
       // If assignment_ids is provided, transfer only those specific assignments
       // Otherwise, transfer all assets from the source employee
@@ -1408,21 +1481,83 @@ export function registerRoutes(app: Express) {
         if (assignmentIds.length === 0)
           return res.status(400).json({ message: "No valid assignment IDs provided" });
 
-        const { error } = await supabase
+        // Get current active assignments to transfer
+        const { data: currentAssignments, error: fetchError } = await supabase
           .from("employee_asset_assignments")
-          .update({ employee_id: toId })
+          .select("id, batch_id, quantity, serial_number, barcode")
           .eq("employee_id", fromId)
+          .eq("is_active", true)
           .in("id", assignmentIds);
 
-        if (error) return res.status(500).json({ message: error.message });
+        if (fetchError) return res.status(500).json({ message: fetchError.message });
+        if (!currentAssignments || currentAssignments.length === 0)
+          return res.status(404).json({ message: "No active assignments found to transfer" });
+
+        // Mark old assignments as inactive
+        const { error: deactivateError } = await supabase
+          .from("employee_asset_assignments")
+          .update({ is_active: false })
+          .eq("employee_id", fromId)
+          .eq("is_active", true)
+          .in("id", assignmentIds);
+
+        if (deactivateError) return res.status(500).json({ message: deactivateError.message });
+
+        // Create new active assignments for the target employee
+        const newAssignments = currentAssignments.map((assignment: any) => ({
+          employee_id: toId,
+          batch_id: assignment.batch_id,
+          quantity: assignment.quantity || 1,
+          serial_number: assignment.serial_number,
+          barcode: assignment.barcode,
+          assignment_date: transferDate,
+          is_active: true
+        }));
+
+        const { error: insertError } = await supabase
+          .from("employee_asset_assignments")
+          .insert(newAssignments);
+
+        if (insertError) return res.status(500).json({ message: insertError.message });
+
       } else {
         // Transfer all assets
-        const { error } = await supabase
+        // Get current active assignments
+        const { data: currentAssignments, error: fetchError } = await supabase
           .from("employee_asset_assignments")
-          .update({ employee_id: toId })
-          .eq("employee_id", fromId);
+          .select("id, batch_id, quantity, serial_number, barcode")
+          .eq("employee_id", fromId)
+          .eq("is_active", true);
 
-        if (error) return res.status(500).json({ message: error.message });
+        if (fetchError) return res.status(500).json({ message: fetchError.message });
+        if (!currentAssignments || currentAssignments.length === 0)
+          return res.status(404).json({ message: "No active assignments found to transfer" });
+
+        // Mark old assignments as inactive
+        const { error: deactivateError } = await supabase
+          .from("employee_asset_assignments")
+          .update({ is_active: false })
+          .eq("employee_id", fromId)
+          .eq("is_active", true);
+
+        if (deactivateError) return res.status(500).json({ message: deactivateError.message });
+
+        // Create new active assignments for the target employee
+        const newAssignments = currentAssignments.map((assignment: any) => ({
+          employee_id: toId,
+          batch_id: assignment.batch_id,
+          quantity: assignment.quantity || 1,
+          serial_number: assignment.serial_number,
+          barcode: assignment.barcode,
+          assignment_date: transferDate,
+          is_active: true
+        }));
+
+        const { error: insertError } = await supabase
+          .from("employee_asset_assignments")
+          .insert(newAssignments);
+
+        if (insertError) return res.status(500).json({ message: insertError.message });
       }
 
       res.json({ ok: true, message: "Assets transferred successfully" });
@@ -2188,11 +2323,12 @@ export function registerRoutes(app: Express) {
 
       // 1b. Pre-filter assets IDs if an employee is selected
       if (hasEmployeeFilter) {
-        // Get batch IDs assigned to this employee
+        // Get batch IDs assigned to this employee (only active)
         const { data: employeeAssignments, error: empError } = await supabase
           .from("employee_asset_assignments")
           .select("batch_id")
-          .eq("employee_id", employeeFilter);
+          .eq("employee_id", employeeFilter)
+          .eq("is_active", true);
         if (empError)
           return res.status(500).json({ message: empError.message });
 
@@ -2349,13 +2485,17 @@ export function registerRoutes(app: Express) {
       if (batchIds.length > 0) {
         const { data: employeeAssignments } = await supabase
           .from("employee_asset_assignments")
-          .select("batch_id")
-          .in("batch_id", batchIds);
+          .select("batch_id, is_active")
+          .in("batch_id", batchIds)
+          .eq("is_active", true);  // Only count active assignments
         
         if (employeeAssignments) {
           employeeAssignments.forEach((assignment: any) => {
-            const count = employeeAssignmentCounts.get(assignment.batch_id) || 0;
-            employeeAssignmentCounts.set(assignment.batch_id, count + 1);
+            // Only count active assignments
+            if (assignment.is_active !== false) {
+              const count = employeeAssignmentCounts.get(assignment.batch_id) || 0;
+              employeeAssignmentCounts.set(assignment.batch_id, count + 1);
+            }
           });
         }
       }
