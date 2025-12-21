@@ -1401,7 +1401,6 @@ export function registerRoutes(app: Express) {
           id,
           employee_id,
           batch_id,
-          quantity,
           serial_number,
           barcode,
           assignment_date,
@@ -1484,7 +1483,7 @@ export function registerRoutes(app: Express) {
         // Get current active assignments to transfer
         const { data: currentAssignments, error: fetchError } = await supabase
           .from("employee_asset_assignments")
-          .select("id, batch_id, quantity, serial_number, barcode")
+          .select("id, batch_id, serial_number, barcode")
           .eq("employee_id", fromId)
           .eq("is_active", true)
           .in("id", assignmentIds);
@@ -1507,7 +1506,6 @@ export function registerRoutes(app: Express) {
         const newAssignments = currentAssignments.map((assignment: any) => ({
           employee_id: toId,
           batch_id: assignment.batch_id,
-          quantity: assignment.quantity || 1,
           serial_number: assignment.serial_number,
           barcode: assignment.barcode,
           assignment_date: transferDate,
@@ -1525,7 +1523,7 @@ export function registerRoutes(app: Express) {
         // Get current active assignments
         const { data: currentAssignments, error: fetchError } = await supabase
           .from("employee_asset_assignments")
-          .select("id, batch_id, quantity, serial_number, barcode")
+          .select("id, batch_id, serial_number, barcode")
           .eq("employee_id", fromId)
           .eq("is_active", true);
 
@@ -1546,7 +1544,6 @@ export function registerRoutes(app: Express) {
         const newAssignments = currentAssignments.map((assignment: any) => ({
           employee_id: toId,
           batch_id: assignment.batch_id,
-          quantity: assignment.quantity || 1,
           serial_number: assignment.serial_number,
           barcode: assignment.barcode,
           assignment_date: transferDate,

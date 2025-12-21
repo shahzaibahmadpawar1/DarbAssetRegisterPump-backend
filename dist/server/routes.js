@@ -1205,7 +1205,6 @@ function registerRoutes(app) {
           id,
           employee_id,
           batch_id,
-          quantity,
           serial_number,
           barcode,
           assignment_date,
@@ -1278,7 +1277,7 @@ function registerRoutes(app) {
                 // Get current active assignments to transfer
                 const { data: currentAssignments, error: fetchError } = await supabaseClient_1.supabase
                     .from("employee_asset_assignments")
-                    .select("id, batch_id, quantity, serial_number, barcode")
+                    .select("id, batch_id, serial_number, barcode")
                     .eq("employee_id", fromId)
                     .eq("is_active", true)
                     .in("id", assignmentIds);
@@ -1299,7 +1298,6 @@ function registerRoutes(app) {
                 const newAssignments = currentAssignments.map((assignment) => ({
                     employee_id: toId,
                     batch_id: assignment.batch_id,
-                    quantity: assignment.quantity || 1,
                     serial_number: assignment.serial_number,
                     barcode: assignment.barcode,
                     assignment_date: transferDate,
@@ -1316,7 +1314,7 @@ function registerRoutes(app) {
                 // Get current active assignments
                 const { data: currentAssignments, error: fetchError } = await supabaseClient_1.supabase
                     .from("employee_asset_assignments")
-                    .select("id, batch_id, quantity, serial_number, barcode")
+                    .select("id, batch_id, serial_number, barcode")
                     .eq("employee_id", fromId)
                     .eq("is_active", true);
                 if (fetchError)
@@ -1335,7 +1333,6 @@ function registerRoutes(app) {
                 const newAssignments = currentAssignments.map((assignment) => ({
                     employee_id: toId,
                     batch_id: assignment.batch_id,
-                    quantity: assignment.quantity || 1,
                     serial_number: assignment.serial_number,
                     barcode: assignment.barcode,
                     assignment_date: transferDate,
