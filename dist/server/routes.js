@@ -897,6 +897,7 @@ function registerRoutes(app) {
             serial_number,
             barcode,
             assignment_date,
+            is_active,
             batch:asset_purchase_batches(
               id,
               batch_name,
@@ -912,8 +913,10 @@ function registerRoutes(app) {
             // Transform data to include department name and asset assignments
             const transformed = (data || []).map((emp) => {
                 const departmentAssignment = emp.department_assignments?.[0];
+                // Filter to only active assignments (is_active = true or NULL for pre-migration records)
+                const activeAssignments = (emp.asset_assignments || []).filter((assignment) => assignment.is_active === true || assignment.is_active === null);
                 // Group asset assignments by asset and batch
-                const assetAssignments = (emp.asset_assignments || []).map((assignment) => ({
+                const assetAssignments = activeAssignments.map((assignment) => ({
                     id: assignment.id,
                     batch_id: assignment.batch_id,
                     batch_name: assignment.batch?.batch_name || null,
