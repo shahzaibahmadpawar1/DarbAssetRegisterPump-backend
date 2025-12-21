@@ -1275,17 +1275,20 @@ function registerRoutes(app) {
                 if (assignmentIds.length === 0)
                     return res.status(400).json({ message: "No valid assignment IDs provided" });
                 // Get current active assignments to transfer
+                // First check if assignments exist and belong to the source employee
+                // Handle both is_active = true and is_active IS NULL (for records created before migration)
                 const { data: currentAssignments, error: fetchError } = await supabaseClient_1.supabase
                     .from("employee_asset_assignments")
                     .select("id, batch_id, serial_number, barcode")
+                    .in("id", assignmentIds)
                     .eq("employee_id", fromId)
-                    .eq("is_active", true)
-                    .in("id", assignmentIds);
+                    .or("is_active.eq.true,is_active.is.null");
                 if (fetchError)
                     return res.status(500).json({ message: fetchError.message });
                 if (!currentAssignments || currentAssignments.length === 0)
                     return res.status(404).json({ message: "No active assignments found to transfer" });
                 // Mark old assignments as inactive and clear serial_number/barcode to avoid unique constraint violations
+                // Update both active and null is_active records
                 const { error: deactivateError } = await supabaseClient_1.supabase
                     .from("employee_asset_assignments")
                     .update({
@@ -1294,8 +1297,8 @@ function registerRoutes(app) {
                     barcode: null
                 })
                     .eq("employee_id", fromId)
-                    .eq("is_active", true)
-                    .in("id", assignmentIds);
+                    .in("id", assignmentIds)
+                    .or("is_active.eq.true,is_active.is.null");
                 if (deactivateError)
                     return res.status(500).json({ message: deactivateError.message });
                 // Create new active assignments for the target employee
@@ -1315,17 +1318,18 @@ function registerRoutes(app) {
             }
             else {
                 // Transfer all assets
-                // Get current active assignments
+                // Get current active assignments (handle both is_active = true and is_active IS NULL)
                 const { data: currentAssignments, error: fetchError } = await supabaseClient_1.supabase
                     .from("employee_asset_assignments")
                     .select("id, batch_id, serial_number, barcode")
                     .eq("employee_id", fromId)
-                    .eq("is_active", true);
+                    .or("is_active.eq.true,is_active.is.null");
                 if (fetchError)
                     return res.status(500).json({ message: fetchError.message });
                 if (!currentAssignments || currentAssignments.length === 0)
                     return res.status(404).json({ message: "No active assignments found to transfer" });
                 // Mark old assignments as inactive and clear serial_number/barcode to avoid unique constraint violations
+                // Update both active and null is_active records
                 const { error: deactivateError } = await supabaseClient_1.supabase
                     .from("employee_asset_assignments")
                     .update({
@@ -1334,7 +1338,7 @@ function registerRoutes(app) {
                     barcode: null
                 })
                     .eq("employee_id", fromId)
-                    .eq("is_active", true);
+                    .or("is_active.eq.true,is_active.is.null");
                 if (deactivateError)
                     return res.status(500).json({ message: deactivateError.message });
                 // Create new active assignments for the target employee
