@@ -762,14 +762,39 @@ export function registerRoutes(app: Express) {
     return res.json({ ok: true, token });
   });
 
-  app.post("/api/logout", (_req, res) => {
-    res.clearCookie(TOKEN_COOKIE_NAME, { 
+  app.post("/api/logout", (req: Request, res: Response) => {
+    // Determine cookie options to match login (must match exactly to clear properly)
+    const origin = req.headers.origin || "";
+    const isProduction = origin.includes("azharalibuttar.com") || process.env.NODE_ENV === "production";
+    
+    const clearCookieOptions: any = {
       path: "/",
-      domain: process.env.NODE_ENV === "production" ? ".azharalibuttar.com" : undefined,
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    });
+    };
+    
+    if (isProduction) {
+      clearCookieOptions.secure = true;
+      clearCookieOptions.sameSite = "none";
+      if (origin.includes("azharalibuttar.com")) {
+        clearCookieOptions.domain = ".azharalibuttar.com";
+      }
+    } else {
+      clearCookieOptions.secure = false;
+      clearCookieOptions.sameSite = "lax";
+    }
+    
+    // Clear cookie with matching options
+    res.clearCookie(TOKEN_COOKIE_NAME, clearCookieOptions);
+    
+    // Also try clearing without domain (in case domain was set differently)
+    if (clearCookieOptions.domain) {
+      res.clearCookie(TOKEN_COOKIE_NAME, {
+        ...clearCookieOptions,
+        domain: undefined,
+      });
+    }
+    
+    console.log("[LOGOUT] Cleared authentication cookie");
     res.json({ ok: true });
   });
 
