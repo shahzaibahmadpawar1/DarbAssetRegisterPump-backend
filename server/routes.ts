@@ -1492,10 +1492,14 @@ export function registerRoutes(app: Express) {
         if (!currentAssignments || currentAssignments.length === 0)
           return res.status(404).json({ message: "No active assignments found to transfer" });
 
-        // Mark old assignments as inactive
+        // Mark old assignments as inactive and clear serial_number/barcode to avoid unique constraint violations
         const { error: deactivateError } = await supabase
           .from("employee_asset_assignments")
-          .update({ is_active: false })
+          .update({ 
+            is_active: false,
+            serial_number: null,
+            barcode: null
+          })
           .eq("employee_id", fromId)
           .eq("is_active", true)
           .in("id", assignmentIds);
@@ -1531,10 +1535,14 @@ export function registerRoutes(app: Express) {
         if (!currentAssignments || currentAssignments.length === 0)
           return res.status(404).json({ message: "No active assignments found to transfer" });
 
-        // Mark old assignments as inactive
+        // Mark old assignments as inactive and clear serial_number/barcode to avoid unique constraint violations
         const { error: deactivateError } = await supabase
           .from("employee_asset_assignments")
-          .update({ is_active: false })
+          .update({ 
+            is_active: false,
+            serial_number: null,
+            barcode: null
+          })
           .eq("employee_id", fromId)
           .eq("is_active", true);
 
