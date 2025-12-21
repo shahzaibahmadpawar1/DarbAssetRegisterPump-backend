@@ -25,21 +25,28 @@ function registerRoutes(app) {
                     return res.status(401).json({ message: "Authentication required" });
                 }
                 const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
+                console.log("[AUTH] Token decoded:", { userId: decoded.userId, role: decoded.role });
                 const { data: user, error } = await supabaseClient_1.supabase
                     .from("users")
                     .select("id, username, role")
                     .eq("id", decoded.userId)
                     .maybeSingle();
                 if (error || !user) {
+                    console.error("[AUTH] User not found in database:", { userId: decoded.userId, error });
                     return res.status(401).json({ message: "Invalid user" });
                 }
+                console.log("[AUTH] User from database:", { id: user.id, username: user.username, role: user.role });
+                console.log("[AUTH] Allowed roles:", allowedRoles);
+                console.log("[AUTH] User role in allowed roles?", allowedRoles.includes(user.role));
                 if (!allowedRoles.includes(user.role)) {
+                    console.error("[AUTH] Permission denied:", { userRole: user.role, allowedRoles });
                     return res.status(403).json({ message: "Insufficient permissions" });
                 }
                 req.user = user;
                 next();
             }
             catch (err) {
+                console.error("[AUTH] Token verification error:", err.message);
                 return res.status(401).json({ message: "Invalid token" });
             }
         };
@@ -575,16 +582,23 @@ function registerRoutes(app) {
         const { username, password } = req.body;
         if (!username || !password)
             return res.status(400).json({ message: "Missing credentials" });
+        console.log("[LOGIN] Attempting login for username:", username);
         const { data: user, error } = await supabaseClient_1.supabase
             .from("users")
-            .select("id, password_hash, role")
+            .select("id, username, password_hash, role")
             .eq("username", username)
             .maybeSingle();
-        if (error || !user)
+        if (error || !user) {
+            console.error("[LOGIN] User not found or error:", error);
             return res.status(401).json({ message: "Invalid credentials" });
+        }
+        console.log("[LOGIN] User found:", { id: user.id, username: user.username, role: user.role });
         const passwordOk = password === user.password_hash;
-        if (!passwordOk)
+        if (!passwordOk) {
+            console.error("[LOGIN] Password mismatch for user:", username);
             return res.status(401).json({ message: "Invalid credentials" });
+        }
+        console.log("[LOGIN] Creating JWT token with role:", user.role);
         const token = jsonwebtoken_1.default.sign({ userId: user.id, role: user.role }, JWT_SECRET, {
             expiresIn: "7d",
         });
@@ -639,17 +653,21 @@ function registerRoutes(app) {
         }
         try {
             const decoded = jsonwebtoken_1.default.verify(token, JWT_SECRET);
+            console.log("[API/ME] Token decoded:", { userId: decoded.userId, roleInToken: decoded.role });
             const { data, error } = await supabaseClient_1.supabase
                 .from("users")
                 .select("id, username, role")
                 .eq("id", decoded.userId)
                 .maybeSingle();
             if (error || !data) {
+                console.error("[API/ME] User not found:", { userId: decoded.userId, error });
                 return res.status(200).json({ authenticated: false });
             }
+            console.log("[API/ME] Returning user data:", { id: data.id, username: data.username, role: data.role });
             return res.json({ authenticated: true, user: data });
         }
         catch (err) {
+            console.error("[API/ME] Token verification error:", err.message);
             // Token expired or invalid - return unauthenticated but with 200 status
             // This prevents the frontend from treating it as an error
             return res.status(200).json({ authenticated: false });
@@ -2178,35 +2196,77 @@ function registerRoutes(app) {
     app.post("/api/accounts", requireRole(['admin']), async (req, res) => {
         try {
             const { username, password, role } = req.body;
+            console.log("[ACCOUNT CREATION] Request body:", { username, role, passwordLength: password?.length });
             if (!username || !password) {
                 return res.status(400).json({ message: "Username and password are required" });
             }
             if (!role || !['admin', 'viewing_user', 'assigning_user'].includes(role)) {
+                console.error("[ACCOUNT CREATION] Invalid role provided:", role);
                 return res.status(400).json({ message: "Valid role is required (admin, viewing_user, assigning_user)" });
             }
             // Check if username already exists
             const { data: existingUser } = await supabaseClient_1.supabase
                 .from("users")
-                .select("id")
+                .select("id, username, role")
                 .eq("username", username)
                 .maybeSingle();
             if (existingUser) {
+                console.error("[ACCOUNT CREATION] Username already exists:", username);
                 return res.status(400).json({ message: "Username already exists" });
             }
             // Create user with plain password (stored as hash in DB, but we're storing plain for simplicity)
             // In production, you should hash passwords properly
+            const insertData = {
+                username: username.trim(),
+                password_hash: password, // In production, hash this with bcrypt
+                role: role.trim(), // Ensure role is trimmed
+            };
+            console.log("[ACCOUNT CREATION] Inserting user with data:", { username: insertData.username, role: insertData.role });
             const { data, error } = await supabaseClient_1.supabase
                 .from("users")
-                .insert([{
-                    username,
-                    password_hash: password, // In production, hash this with bcrypt
-                    role,
-                }])
+                .insert([insertData])
                 .select("id, username, role, created_at")
                 .maybeSingle();
-            if (error)
+            if (error) {
+                console.error("[ACCOUNT CREATION] Database error:", error);
                 return res.status(500).json({ message: error.message });
+            }
+            if (!data) {
+                console.error("[ACCOUNT CREATION] No data returned from insert");
+                return res.status(500).json({ message: "Failed to create account" });
+            }
+            console.log("[ACCOUNT CREATION] Successfully created user:", { id: data.id, username: data.username, role: data.role });
             res.status(201).json(data);
+        }
+        catch (e) {
+            console.error("[ACCOUNT CREATION] Exception:", e);
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
+    // Verify user account role (for debugging - admin only)
+    app.get("/api/accounts/verify/:username", requireRole(['admin']), async (req, res) => {
+        try {
+            const { username } = req.params;
+            const { data, error } = await supabaseClient_1.supabase
+                .from("users")
+                .select("id, username, role, created_at")
+                .eq("username", username)
+                .maybeSingle();
+            if (error) {
+                return res.status(500).json({ message: error.message });
+            }
+            if (!data) {
+                return res.status(404).json({ message: "User not found" });
+            }
+            res.json({
+                user: data,
+                roleCheck: {
+                    isAdmin: data.role === 'admin',
+                    isViewingUser: data.role === 'viewing_user',
+                    isAssigningUser: data.role === 'assigning_user',
+                    isValidRole: ['admin', 'viewing_user', 'assigning_user'].includes(data.role)
+                }
+            });
         }
         catch (e) {
             res.status(500).json({ message: e?.message || "Internal error" });
