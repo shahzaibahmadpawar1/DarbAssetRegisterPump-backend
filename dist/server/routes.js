@@ -1297,6 +1297,8 @@ function registerRoutes(app) {
             asset:assets(id, asset_name, asset_number)
           )
         `)
+                // Only return active assignments (is_active = true or is_active IS NULL for pre-migration records)
+                .or("is_active.eq.true,is_active.is.null")
                 .order("assignment_date", { ascending: false });
             // Filter by batch_id if provided
             if (batch_id) {
