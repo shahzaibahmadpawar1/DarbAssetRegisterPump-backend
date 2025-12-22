@@ -1554,6 +1554,93 @@ export function registerRoutes(app: Express) {
     }
   });
 
+  // Search assets by barcode (searches both station and employee assignments)
+  app.get("/api/assets/search/barcode", requireAuth, async (req, res) => {
+    try {
+      const { barcode } = req.query;
+      
+      if (!barcode || typeof barcode !== "string") {
+        return res.status(400).json({ message: "barcode parameter is required" });
+      }
+
+      const barcodeValue = barcode.trim();
+      if (!barcodeValue) {
+        return res.json([]);
+      }
+
+      // Find assets with this barcode in station assignments (assignment_batch_allocations)
+      const { data: stationAllocations, error: stationError } = await supabase
+        .from("assignment_batch_allocations")
+        .select(`
+          batch_id,
+          batch:asset_purchase_batches!inner(asset_id)
+        `)
+        .eq("barcode", barcodeValue);
+
+      if (stationError) {
+        console.error("Error searching station assignments:", stationError);
+      }
+
+      // Find assets with this barcode in employee assignments (employee_asset_assignments)
+      const { data: employeeAssignments, error: employeeError } = await supabase
+        .from("employee_asset_assignments")
+        .select(`
+          batch_id,
+          batch:asset_purchase_batches!inner(asset_id)
+        `)
+        .eq("barcode", barcodeValue)
+        .or("is_active.eq.true,is_active.is.null");
+
+      if (employeeError) {
+        console.error("Error searching employee assignments:", employeeError);
+      }
+
+      // Collect unique asset IDs
+      const assetIds = new Set<number>();
+      
+      if (stationAllocations) {
+        stationAllocations.forEach((alloc: any) => {
+          if (alloc.batch?.asset_id) {
+            assetIds.add(alloc.batch.asset_id);
+          }
+        });
+      }
+
+      if (employeeAssignments) {
+        employeeAssignments.forEach((ea: any) => {
+          if (ea.batch?.asset_id) {
+            assetIds.add(ea.batch.asset_id);
+          }
+        });
+      }
+
+      if (assetIds.size === 0) {
+        return res.json([]);
+      }
+
+      // Fetch the assets
+      const { data: assets, error: assetsError } = await supabase
+        .from("assets")
+        .select("*")
+        .in("id", Array.from(assetIds))
+        .order("id", { ascending: false });
+
+      if (assetsError) {
+        return res.status(500).json({ message: assetsError.message });
+      }
+
+      // Hydrate assets with full data
+      const result = await hydrateAssets(assets || []);
+      if (result.error) {
+        return res.status(500).json({ message: result.error.message });
+      }
+
+      res.json(result.data || []);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
   // Transfer assets from one employee to another
   app.put("/api/employees/:fromId/transfer-assets/:toId", requireAssignPermission, async (req, res) => {
     try {
