@@ -1015,6 +1015,80 @@ function registerRoutes(app) {
             res.status(500).json({ message: e?.message || "Internal error" });
         }
     });
+    // Bulk import employees from array
+    app.post("/api/employees/bulk", requireAdminPermission, async (req, res) => {
+        try {
+            const { employees } = req.body;
+            if (!Array.isArray(employees) || employees.length === 0) {
+                return res.status(400).json({ message: "employees array is required and must not be empty" });
+            }
+            // Validate each employee
+            const validEmployees = [];
+            const errors = [];
+            for (let i = 0; i < employees.length; i++) {
+                const emp = employees[i];
+                const rowNum = i + 2; // +2 because row 1 is header, and arrays are 0-indexed
+                if (!emp.name || typeof emp.name !== "string" || !emp.name.trim()) {
+                    errors.push(`Row ${rowNum}: Employee name is required`);
+                    continue;
+                }
+                validEmployees.push({
+                    name: emp.name.trim(),
+                    employee_id: emp.employee_id?.trim() || null,
+                    department_id: emp.department_id || null,
+                });
+            }
+            if (errors.length > 0) {
+                return res.status(400).json({
+                    message: "Validation errors found",
+                    errors
+                });
+            }
+            // Insert employees
+            const employeesToInsert = validEmployees.map(emp => ({
+                name: emp.name,
+                employee_id: emp.employee_id,
+            }));
+            const { data: createdEmployees, error: empError } = await supabaseClient_1.supabase
+                .from("employees")
+                .insert(employeesToInsert)
+                .select("*");
+            if (empError) {
+                return res.status(500).json({ message: empError.message });
+            }
+            // Assign departments
+            const departmentAssignments = [];
+            for (let i = 0; i < createdEmployees.length; i++) {
+                const employee = createdEmployees[i];
+                const originalEmp = validEmployees[i];
+                if (originalEmp.department_id) {
+                    departmentAssignments.push({
+                        employee_id: employee.id,
+                        department_id: originalEmp.department_id,
+                        assigned_at: new Date().toISOString(),
+                    });
+                }
+            }
+            if (departmentAssignments.length > 0) {
+                const { error: deptError } = await supabaseClient_1.supabase
+                    .from("employee_department_assignments")
+                    .insert(departmentAssignments);
+                if (deptError) {
+                    console.error("Failed to assign some employees to departments:", deptError);
+                    // Continue even if department assignment fails
+                }
+            }
+            res.json({
+                success: true,
+                message: `Successfully imported ${createdEmployees.length} employee(s)`,
+                count: createdEmployees.length,
+                employees: createdEmployees,
+            });
+        }
+        catch (e) {
+            res.status(500).json({ message: e?.message || "Internal error" });
+        }
+    });
     app.put("/api/employees/:id", requireAdminPermission, async (req, res) => {
         try {
             const id = Number(req.params.id);
