@@ -306,10 +306,12 @@ function registerRoutes(app) {
                 assignments: assignmentList,
                 batches: batches.map((b) => ({
                     id: b.id,
+                    batch_name: b.batch_name || null,
                     purchase_date: b.purchase_date,
                     purchase_price: Number(b.purchase_price),
                     quantity: Number(b.quantity),
                     remaining_quantity: Number(b.remaining_quantity),
+                    remarks: b.remarks || null,
                 })),
                 totalAssigned, // Total (stations + employees) for backward compatibility
                 totalAssignedToStations, // New: Only station assignments
