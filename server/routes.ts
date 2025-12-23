@@ -2702,15 +2702,19 @@ export function registerRoutes(app: Express) {
         const allAssignments = asset.assignments || [];
 
         // A. Strict Filter: Isolate assignments for the selected station
+        // When filtering by station, ONLY show station assignments, not employee assignments
         let relevantAssignments = allAssignments;
-        if (hasPumpFilter) {
+        if (hasPumpFilter && !hasEmployeeFilter) {
           relevantAssignments = allAssignments.filter(
             (assignment: any) => Number(assignment.pump_id) === Number(pumpFilter)
           );
+        } else if (hasPumpFilter && hasEmployeeFilter) {
+          // If both filters are set, we should only show employee assignments (handled in section E)
+          relevantAssignments = [];
         }
 
         // B. If station selected but this asset has NO assignments there, hide it entirely.
-        if (hasPumpFilter && relevantAssignments.length === 0 && !hasEmployeeFilter) {
+        if (hasPumpFilter && !hasEmployeeFilter && relevantAssignments.length === 0) {
           return [];
         }
 
@@ -2776,8 +2780,11 @@ export function registerRoutes(app: Express) {
         });
 
         // E. Add employee assignments if filtering by employee
+        // When filtering by employee, ONLY show employee assignments, not station assignments
         if (hasEmployeeFilter) {
           const assetBatchIds = new Set((asset.batches || []).map((b: any) => b.id));
+          // Clear station assignments when filtering by employee
+          result.length = 0;
           employeeAssignmentsData.forEach((empAssign: any) => {
             if (empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id) {
               result.push({

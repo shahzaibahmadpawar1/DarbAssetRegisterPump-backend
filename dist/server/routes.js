@@ -2349,12 +2349,17 @@ function registerRoutes(app) {
             const flattened = filteredAssets.flatMap((asset) => {
                 const allAssignments = asset.assignments || [];
                 // A. Strict Filter: Isolate assignments for the selected station
+                // When filtering by station, ONLY show station assignments, not employee assignments
                 let relevantAssignments = allAssignments;
-                if (hasPumpFilter) {
+                if (hasPumpFilter && !hasEmployeeFilter) {
                     relevantAssignments = allAssignments.filter((assignment) => Number(assignment.pump_id) === Number(pumpFilter));
                 }
+                else if (hasPumpFilter && hasEmployeeFilter) {
+                    // If both filters are set, we should only show employee assignments (handled in section E)
+                    relevantAssignments = [];
+                }
                 // B. If station selected but this asset has NO assignments there, hide it entirely.
-                if (hasPumpFilter && relevantAssignments.length === 0 && !hasEmployeeFilter) {
+                if (hasPumpFilter && !hasEmployeeFilter && relevantAssignments.length === 0) {
                     return [];
                 }
                 // C. If no station selected (View All) and asset is unassigned, show ghost row.
@@ -2415,8 +2420,11 @@ function registerRoutes(app) {
                     }
                 });
                 // E. Add employee assignments if filtering by employee
+                // When filtering by employee, ONLY show employee assignments, not station assignments
                 if (hasEmployeeFilter) {
                     const assetBatchIds = new Set((asset.batches || []).map((b) => b.id));
+                    // Clear station assignments when filtering by employee
+                    result.length = 0;
                     employeeAssignmentsData.forEach((empAssign) => {
                         if (empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id) {
                             result.push({
