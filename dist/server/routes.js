@@ -2348,22 +2348,40 @@ function registerRoutes(app) {
             }
             const flattened = filteredAssets.flatMap((asset) => {
                 const allAssignments = asset.assignments || [];
+                // When filtering by employee, skip all station assignment processing
+                if (hasEmployeeFilter) {
+                    // Skip to section E (employee assignments only)
+                    const result = [];
+                    const assetBatchIds = new Set((asset.batches || []).map((b) => b.id));
+                    employeeAssignmentsData.forEach((empAssign) => {
+                        if (empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id) {
+                            result.push({
+                                ...asset,
+                                assignmentQuantity: 1,
+                                pump_id: null,
+                                pumpName: null,
+                                employeeName: empAssign.employee?.name || null,
+                                employee_id: empAssign.employee_id,
+                                serial_number: empAssign.serial_number || null,
+                                barcode: empAssign.barcode || null,
+                                assignmentValue: empAssign.batch.purchase_price || 0,
+                            });
+                        }
+                    });
+                    return result;
+                }
                 // A. Strict Filter: Isolate assignments for the selected station
                 // When filtering by station, ONLY show station assignments, not employee assignments
                 let relevantAssignments = allAssignments;
-                if (hasPumpFilter && !hasEmployeeFilter) {
+                if (hasPumpFilter) {
                     relevantAssignments = allAssignments.filter((assignment) => Number(assignment.pump_id) === Number(pumpFilter));
                 }
-                else if (hasPumpFilter && hasEmployeeFilter) {
-                    // If both filters are set, we should only show employee assignments (handled in section E)
-                    relevantAssignments = [];
-                }
                 // B. If station selected but this asset has NO assignments there, hide it entirely.
-                if (hasPumpFilter && !hasEmployeeFilter && relevantAssignments.length === 0) {
+                if (hasPumpFilter && relevantAssignments.length === 0) {
                     return [];
                 }
                 // C. If no station selected (View All) and asset is unassigned, show ghost row.
-                if (!hasPumpFilter && relevantAssignments.length === 0 && !hasEmployeeFilter) {
+                if (!hasPumpFilter && relevantAssignments.length === 0) {
                     return [
                         {
                             ...asset,
@@ -2419,28 +2437,8 @@ function registerRoutes(app) {
                         });
                     }
                 });
-                // E. Add employee assignments if filtering by employee
-                // When filtering by employee, ONLY show employee assignments, not station assignments
-                if (hasEmployeeFilter) {
-                    const assetBatchIds = new Set((asset.batches || []).map((b) => b.id));
-                    // Clear station assignments when filtering by employee
-                    result.length = 0;
-                    employeeAssignmentsData.forEach((empAssign) => {
-                        if (empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id) {
-                            result.push({
-                                ...asset,
-                                assignmentQuantity: 1,
-                                pump_id: null,
-                                pumpName: null,
-                                employeeName: empAssign.employee?.name || null,
-                                employee_id: empAssign.employee_id,
-                                serial_number: empAssign.serial_number || null,
-                                barcode: empAssign.barcode || null,
-                                assignmentValue: empAssign.batch.purchase_price || 0,
-                            });
-                        }
-                    });
-                }
+                // Note: Employee assignments are handled earlier when hasEmployeeFilter is true
+                // This section only processes station assignments
                 return result;
             });
             return res.json(flattened);
