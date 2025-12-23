@@ -2336,7 +2336,7 @@ function registerRoutes(app) {
             barcode,
             employee_id,
             assignment_date,
-            batch:asset_purchase_batches!inner(asset_id, purchase_price)
+            batch:asset_purchase_batches!inner(id, asset_id, purchase_price)
           `)
                     .eq("employee_id", employeeFilter)
                     .eq("is_active", true);
@@ -2361,7 +2361,7 @@ function registerRoutes(app) {
             barcode,
             employee_id,
             assignment_date,
-            batch:asset_purchase_batches!inner(asset_id, purchase_price)
+            batch:asset_purchase_batches!inner(id, asset_id, purchase_price)
           `)
                     .eq("is_active", true);
                 const { data: empAssignments, error: empAssignError } = await empAssignQuery;
