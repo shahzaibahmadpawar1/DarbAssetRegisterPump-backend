@@ -1573,6 +1573,8 @@ export function registerRoutes(app: Express) {
         .from("assignment_batch_allocations")
         .select(`
           batch_id,
+          serial_number,
+          barcode,
           batch:asset_purchase_batches!inner(asset_id)
         `)
         .eq("barcode", barcodeValue);
@@ -1586,9 +1588,102 @@ export function registerRoutes(app: Express) {
         .from("employee_asset_assignments")
         .select(`
           batch_id,
+          serial_number,
+          barcode,
           batch:asset_purchase_batches!inner(asset_id)
         `)
         .eq("barcode", barcodeValue)
+        .or("is_active.eq.true,is_active.is.null");
+
+      if (employeeError) {
+        console.error("Error searching employee assignments:", employeeError);
+      }
+
+      // Collect unique asset IDs
+      const assetIds = new Set<number>();
+      
+      if (stationAllocations) {
+        stationAllocations.forEach((alloc: any) => {
+          if (alloc.batch?.asset_id) {
+            assetIds.add(alloc.batch.asset_id);
+          }
+        });
+      }
+
+      if (employeeAssignments) {
+        employeeAssignments.forEach((ea: any) => {
+          if (ea.batch?.asset_id) {
+            assetIds.add(ea.batch.asset_id);
+          }
+        });
+      }
+
+      if (assetIds.size === 0) {
+        return res.json([]);
+      }
+
+      // Fetch the assets
+      const { data: assets, error: assetsError } = await supabase
+        .from("assets")
+        .select("*")
+        .in("id", Array.from(assetIds))
+        .order("id", { ascending: false });
+
+      if (assetsError) {
+        return res.status(500).json({ message: assetsError.message });
+      }
+
+      // Hydrate assets with full data
+      const result = await hydrateAssets(assets || []);
+      if (result.error) {
+        return res.status(500).json({ message: result.error.message });
+      }
+
+      res.json(result.data || []);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Internal error" });
+    }
+  });
+
+  // Search assets by serial number (searches both station and employee assignments)
+  app.get("/api/assets/search/serial", requireAuth, async (req, res) => {
+    try {
+      const { serial } = req.query;
+      
+      if (!serial || typeof serial !== "string") {
+        return res.status(400).json({ message: "serial parameter is required" });
+      }
+
+      const serialValue = serial.trim();
+      if (!serialValue) {
+        return res.json([]);
+      }
+
+      // Find assets with this serial number in station assignments (assignment_batch_allocations)
+      const { data: stationAllocations, error: stationError } = await supabase
+        .from("assignment_batch_allocations")
+        .select(`
+          batch_id,
+          serial_number,
+          barcode,
+          batch:asset_purchase_batches!inner(asset_id)
+        `)
+        .eq("serial_number", serialValue);
+
+      if (stationError) {
+        console.error("Error searching station assignments:", stationError);
+      }
+
+      // Find assets with this serial number in employee assignments (employee_asset_assignments)
+      const { data: employeeAssignments, error: employeeError } = await supabase
+        .from("employee_asset_assignments")
+        .select(`
+          batch_id,
+          serial_number,
+          barcode,
+          batch:asset_purchase_batches!inner(asset_id)
+        `)
+        .eq("serial_number", serialValue)
         .or("is_active.eq.true,is_active.is.null");
 
       if (employeeError) {
@@ -2580,6 +2675,29 @@ export function registerRoutes(app: Express) {
       });
 
       // 5. Flatten and STRICTLY filter assignments
+      // Also fetch employee assignments if filtering by employee
+      let employeeAssignmentsData: any[] = [];
+      if (hasEmployeeFilter) {
+        const { data: empAssignments, error: empAssignError } = await supabase
+          .from("employee_asset_assignments")
+          .select(`
+            id,
+            batch_id,
+            serial_number,
+            barcode,
+            employee_id,
+            assignment_date,
+            batch:asset_purchase_batches!inner(asset_id, purchase_price),
+            employee:employees(id, name, employee_id)
+          `)
+          .eq("employee_id", employeeFilter)
+          .eq("is_active", true);
+        
+        if (!empAssignError && empAssignments) {
+          employeeAssignmentsData = empAssignments || [];
+        }
+      }
+
       const flattened = filteredAssets.flatMap((asset: any) => {
         const allAssignments = asset.assignments || [];
 
@@ -2592,34 +2710,92 @@ export function registerRoutes(app: Express) {
         }
 
         // B. If station selected but this asset has NO assignments there, hide it entirely.
-        if (hasPumpFilter && relevantAssignments.length === 0) {
+        if (hasPumpFilter && relevantAssignments.length === 0 && !hasEmployeeFilter) {
           return [];
         }
 
         // C. If no station selected (View All) and asset is unassigned, show ghost row.
-        if (!hasPumpFilter && relevantAssignments.length === 0) {
+        if (!hasPumpFilter && relevantAssignments.length === 0 && !hasEmployeeFilter) {
           return [
             {
               ...asset,
               assignmentQuantity: 0,
               pump_id: null,
               pumpName: null,
+              employeeName: null,
+              employee_id: null,
+              serial_number: null,
+              barcode: null,
               assignmentValue: 0,
             },
           ];
         }
 
-        // D. Map valid assignments to rows
-        return relevantAssignments.map((assignment: any) => ({
-          ...asset, // Keeps parent asset info
-          assignmentQuantity: assignment.quantity,
-          pump_id: assignment.pump_id,
-          pumpName: assignment.pump_name,
-          assignmentValue:
-            assignment.assignment_value ??
-            Number(assignment.quantity || 0) *
-            (Number(asset.asset_value) || 0),
-        }));
+        const result: any[] = [];
+
+        // D. Map valid station assignments to rows
+        // Include batch_allocations with serial_number and barcode if they exist
+        relevantAssignments.forEach((assignment: any) => {
+          const batchAllocations = assignment.batch_allocations || [];
+          
+          // If there are batch allocations with serial numbers/barcodes, create one row per allocation
+          if (batchAllocations.length > 0) {
+            batchAllocations.forEach((alloc: any) => {
+              result.push({
+                ...asset, // Keeps parent asset info
+                assignmentQuantity: 1, // Each allocation is one item
+                pump_id: assignment.pump_id,
+                pumpName: assignment.pump_name,
+                employeeName: null,
+                employee_id: null,
+                serial_number: alloc.serial_number || null,
+                barcode: alloc.barcode || null,
+                assignmentValue: alloc.asset_purchase_batches?.purchase_price || 
+                  (assignment.assignment_value ??
+                  Number(assignment.quantity || 0) *
+                  (Number(asset.asset_value) || 0)),
+              });
+            });
+          } else {
+            // Fallback: if no batch allocations, use the old format but still include serial/barcode fields
+            result.push({
+              ...asset, // Keeps parent asset info
+              assignmentQuantity: assignment.quantity,
+              pump_id: assignment.pump_id,
+              pumpName: assignment.pump_name,
+              employeeName: null,
+              employee_id: null,
+              serial_number: null,
+              barcode: null,
+              assignmentValue:
+                assignment.assignment_value ??
+                Number(assignment.quantity || 0) *
+                (Number(asset.asset_value) || 0),
+            });
+          }
+        });
+
+        // E. Add employee assignments if filtering by employee
+        if (hasEmployeeFilter) {
+          const assetBatchIds = new Set((asset.batches || []).map((b: any) => b.id));
+          employeeAssignmentsData.forEach((empAssign: any) => {
+            if (empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id) {
+              result.push({
+                ...asset,
+                assignmentQuantity: 1,
+                pump_id: null,
+                pumpName: null,
+                employeeName: empAssign.employee?.name || null,
+                employee_id: empAssign.employee_id,
+                serial_number: empAssign.serial_number || null,
+                barcode: empAssign.barcode || null,
+                assignmentValue: empAssign.batch.purchase_price || 0,
+              });
+            }
+          });
+        }
+
+        return result;
       });
 
       return res.json(flattened);
