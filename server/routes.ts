@@ -2677,7 +2677,20 @@ export function registerRoutes(app: Express) {
       // 5. Flatten and STRICTLY filter assignments
       // Also fetch employee assignments if filtering by employee
       let employeeAssignmentsData: any[] = [];
+      let employeeNameMap = new Map<number, string>();
+      
       if (hasEmployeeFilter) {
+        // First, get the employee name
+        const { data: employeeData, error: empNameError } = await supabase
+          .from("employees")
+          .select("id, name")
+          .eq("id", employeeFilter)
+          .maybeSingle();
+        
+        if (!empNameError && employeeData) {
+          employeeNameMap.set(employeeFilter, employeeData.name);
+        }
+        
         const { data: empAssignments, error: empAssignError } = await supabase
           .from("employee_asset_assignments")
           .select(`
@@ -2687,8 +2700,7 @@ export function registerRoutes(app: Express) {
             barcode,
             employee_id,
             assignment_date,
-            batch:asset_purchase_batches!inner(asset_id, purchase_price),
-            employee:employees(id, name, employee_id)
+            batch:asset_purchase_batches!inner(asset_id, purchase_price)
           `)
           .eq("employee_id", employeeFilter)
           .eq("is_active", true);
@@ -2708,13 +2720,18 @@ export function registerRoutes(app: Express) {
           const assetBatchIds = new Set((asset.batches || []).map((b: any) => b.id));
           employeeAssignmentsData.forEach((empAssign: any) => {
             if (empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id) {
+              // Get employee name from the map we created
+              const employeeName = employeeNameMap.get(empAssign.employee_id) || null;
+              
               result.push({
                 ...asset,
-                assignmentQuantity: 1,
+                // Explicitly override all station-related fields to null
                 pump_id: null,
                 pumpName: null,
-                employeeName: empAssign.employee?.name || null,
+                // Set employee fields explicitly
+                employeeName: employeeName,
                 employee_id: empAssign.employee_id,
+                assignmentQuantity: 1,
                 serial_number: empAssign.serial_number || null,
                 barcode: empAssign.barcode || null,
                 assignmentValue: empAssign.batch.purchase_price || 0,
