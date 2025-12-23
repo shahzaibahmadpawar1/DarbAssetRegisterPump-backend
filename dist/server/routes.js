@@ -2310,36 +2310,11 @@ function registerRoutes(app) {
                 if (filteredAssetIds.length === 0)
                     return res.json([]);
             }
-            // 2. Fetch Assets
-            let assetQuery = supabaseClient_1.supabase
-                .from("assets")
-                .select("*")
-                .order("category_id", { ascending: true });
-            if (category_id && category_id !== "all")
-                assetQuery = assetQuery.eq("category_id", category_id);
-            if (filteredAssetIds)
-                assetQuery = assetQuery.in("id", filteredAssetIds);
-            const { data, error } = await assetQuery;
-            if (error)
-                return res.status(500).json({ message: error.message });
-            // 3. Hydrate with assignments and details
-            const hydrated = await hydrateAssets(data || []);
-            if (hydrated.error) {
-                console.error("Error hydrating assets in assets-by-category report:", hydrated.error);
-                return res.status(500).json({ message: hydrated.error.message || "Failed to hydrate assets" });
-            }
-            // 4. Filter top-level assets (Category/ID check)
-            const filteredAssets = (hydrated.data || []).filter((asset) => {
-                if (category_id && category_id !== "all")
-                    return asset.category_id === category_id;
-                if (filteredAssetIds)
-                    return filteredAssetIds.includes(asset.id);
-                return true;
-            });
-            // 5. Flatten and STRICTLY filter assignments
-            // Fetch employee assignments - either for specific employee filter or all active assignments
+            // 2. Fetch employee assignments FIRST (before fetching assets)
+            // This ensures we can include assets that only have employee assignments
             let employeeAssignmentsData = [];
             let employeeNameMap = new Map();
+            let employeeAssetIdsSet = new Set();
             // Always fetch employee assignments to include them in "View All" mode
             // If filtering by employee, only fetch that employee's assignments
             if (hasEmployeeFilter) {
@@ -2367,11 +2342,16 @@ function registerRoutes(app) {
                     .eq("is_active", true);
                 if (!empAssignError && empAssignments) {
                     employeeAssignmentsData = empAssignments || [];
+                    // Collect asset IDs from employee assignments
+                    empAssignments.forEach((ea) => {
+                        if (ea.batch && ea.batch.asset_id) {
+                            employeeAssetIdsSet.add(ea.batch.asset_id);
+                        }
+                    });
                 }
             }
             else {
                 // When no employee filter, fetch all active employee assignments to show them in "View All"
-                // But we need to limit to assets we're already showing (filteredAssetIds if any)
                 let empAssignQuery = supabaseClient_1.supabase
                     .from("employee_asset_assignments")
                     .select(`
@@ -2384,19 +2364,17 @@ function registerRoutes(app) {
             batch:asset_purchase_batches!inner(asset_id, purchase_price)
           `)
                     .eq("is_active", true);
-                // If we have filtered asset IDs, we need to filter by batch asset_id
-                // But since we can't directly filter by nested asset_id, we'll fetch all and filter in code
                 const { data: empAssignments, error: empAssignError } = await empAssignQuery;
                 if (!empAssignError && empAssignments) {
-                    // Filter to only include assignments for assets we're showing
-                    if (filteredAssetIds && filteredAssetIds.length > 0) {
-                        employeeAssignmentsData = empAssignments.filter((ea) => ea.batch && filteredAssetIds.includes(ea.batch.asset_id));
-                    }
-                    else {
-                        employeeAssignmentsData = empAssignments;
-                    }
+                    employeeAssignmentsData = empAssignments;
+                    // Collect asset IDs from employee assignments
+                    empAssignments.forEach((ea) => {
+                        if (ea.batch && ea.batch.asset_id) {
+                            employeeAssetIdsSet.add(ea.batch.asset_id);
+                        }
+                    });
                     // Build employee name map for all employees in the results
-                    const employeeIds = Array.from(new Set(employeeAssignmentsData.map((ea) => ea.employee_id)));
+                    const employeeIds = Array.from(new Set(employeeAssignmentsData.map((ea) => ea.employee_id).filter((id) => id != null)));
                     if (employeeIds.length > 0) {
                         const { data: allEmployees, error: empNameError } = await supabaseClient_1.supabase
                             .from("employees")
@@ -2406,10 +2384,73 @@ function registerRoutes(app) {
                             allEmployees.forEach((emp) => {
                                 employeeNameMap.set(emp.id, emp.name);
                             });
+                            console.log(`Built employee name map with ${employeeNameMap.size} employees for View All mode`);
                         }
+                        else if (empNameError) {
+                            console.error("Error fetching employee names:", empNameError);
+                        }
+                    }
+                    else {
+                        console.log("No employee IDs found in employeeAssignmentsData");
                     }
                 }
             }
+            // 3. Combine asset IDs: include both station-assigned assets AND employee-assigned assets
+            // Also get asset IDs from station assignments if not already filtered
+            if (!filteredAssetIds) {
+                // If no station filter, get all assets with station assignments
+                const { data: allStationAssignments, error: stationAssignError } = await supabaseClient_1.supabase
+                    .from("asset_assignments")
+                    .select("asset_id");
+                if (!stationAssignError && allStationAssignments) {
+                    const stationAssetIds = Array.from(new Set(allStationAssignments.map((a) => a.asset_id)));
+                    filteredAssetIds = stationAssetIds;
+                }
+                else {
+                    filteredAssetIds = [];
+                }
+            }
+            // Merge employee-assigned asset IDs with station-assigned asset IDs
+            if (employeeAssetIdsSet.size > 0) {
+                const employeeAssetIdsArray = Array.from(employeeAssetIdsSet);
+                if (filteredAssetIds && filteredAssetIds.length > 0) {
+                    // Merge: include assets from both station and employee assignments
+                    const combinedIds = new Set([...filteredAssetIds, ...employeeAssetIdsArray]);
+                    filteredAssetIds = Array.from(combinedIds);
+                }
+                else {
+                    // If no station assignments, include all employee-assigned assets
+                    filteredAssetIds = employeeAssetIdsArray;
+                }
+            }
+            // 4. Fetch Assets (now including assets with both station AND employee assignments)
+            let assetQuery = supabaseClient_1.supabase
+                .from("assets")
+                .select("*")
+                .order("category_id", { ascending: true });
+            if (category_id && category_id !== "all")
+                assetQuery = assetQuery.eq("category_id", category_id);
+            // Only filter by asset IDs if we have them (otherwise fetch all assets and filter in flattening step)
+            if (filteredAssetIds && filteredAssetIds.length > 0)
+                assetQuery = assetQuery.in("id", filteredAssetIds);
+            const { data, error } = await assetQuery;
+            if (error)
+                return res.status(500).json({ message: error.message });
+            // 5. Hydrate with assignments and details
+            const hydrated = await hydrateAssets(data || []);
+            if (hydrated.error) {
+                console.error("Error hydrating assets in assets-by-category report:", hydrated.error);
+                return res.status(500).json({ message: hydrated.error.message || "Failed to hydrate assets" });
+            }
+            // 6. Filter top-level assets (Category/ID check)
+            const filteredAssets = (hydrated.data || []).filter((asset) => {
+                if (category_id && category_id !== "all")
+                    return asset.category_id === category_id;
+                if (filteredAssetIds && filteredAssetIds.length > 0)
+                    return filteredAssetIds.includes(asset.id);
+                return true;
+            });
+            // 7. Flatten and process assignments
             const flattened = filteredAssets.flatMap((asset) => {
                 const allAssignments = asset.assignments || [];
                 // When filtering by employee, skip all station assignment processing
@@ -2439,22 +2480,29 @@ function registerRoutes(app) {
                     });
                     return result;
                 }
+                const result = [];
                 // A. Strict Filter: Isolate assignments for the selected station
                 // When filtering by station, ONLY show station assignments, not employee assignments
                 let relevantAssignments = allAssignments;
                 if (hasPumpFilter) {
                     relevantAssignments = allAssignments.filter((assignment) => Number(assignment.pump_id) === Number(pumpFilter));
                 }
-                // B. If station selected but this asset has NO assignments there, hide it entirely.
+                // B. If station selected but this asset has NO assignments there, check for employee assignments
+                // If no employee assignments either, hide it entirely
                 if (hasPumpFilter && relevantAssignments.length === 0) {
-                    return [];
+                    // Check if this asset has employee assignments
+                    if (!hasEmployeeFilter) {
+                        const assetBatchIds = new Set((asset.batches || []).map((b) => b.id));
+                        const hasEmployeeAssignments = employeeAssignmentsData.some((empAssign) => empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id);
+                        if (!hasEmployeeAssignments) {
+                            return []; // No station or employee assignments
+                        }
+                    }
+                    else {
+                        return []; // Filtering by station and no station assignments
+                    }
                 }
-                // C. If no station selected (View All) and asset has no assignments with items, skip it
-                // We only want to show items, not unassigned assets
-                if (!hasPumpFilter && relevantAssignments.length === 0) {
-                    return []; // Don't show unassigned assets - we only want items
-                }
-                const result = [];
+                // C. Process station assignments first
                 // D. Map valid station assignments to rows
                 // Include batch_allocations with serial_number and barcode if they exist
                 relevantAssignments.forEach((assignment) => {
@@ -2483,11 +2531,17 @@ function registerRoutes(app) {
                 });
                 // E. Add employee assignments for this asset (when not filtering by employee)
                 // This ensures employee-assigned assets show up in "View All" mode
+                // IMPORTANT: Include employee assignments even if asset has no station assignments
                 if (!hasEmployeeFilter) {
                     const assetBatchIds = new Set((asset.batches || []).map((b) => b.id));
                     employeeAssignmentsData.forEach((empAssign) => {
                         if (empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id) {
                             const employeeName = employeeNameMap.get(empAssign.employee_id) || null;
+                            // Debug logging
+                            if (!employeeName && empAssign.employee_id) {
+                                console.log(`Warning: Employee name not found for employee_id ${empAssign.employee_id}`);
+                                console.log(`EmployeeNameMap keys:`, Array.from(employeeNameMap.keys()));
+                            }
                             result.push({
                                 ...asset,
                                 pump_id: null,
@@ -2501,6 +2555,11 @@ function registerRoutes(app) {
                             });
                         }
                     });
+                }
+                // F. If no station assignments AND no employee assignments, skip this asset
+                // We only want to show items, not unassigned assets
+                if (result.length === 0) {
+                    return []; // Don't show unassigned assets - we only want items
                 }
                 return result;
             });
