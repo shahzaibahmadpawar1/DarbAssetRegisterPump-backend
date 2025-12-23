@@ -2688,10 +2688,12 @@ export function registerRoutes(app: Express) {
       });
 
       // 5. Flatten and STRICTLY filter assignments
-      // Also fetch employee assignments if filtering by employee
+      // Fetch employee assignments - either for specific employee filter or all active assignments
       let employeeAssignmentsData: any[] = [];
       let employeeNameMap = new Map<number, string>();
       
+      // Always fetch employee assignments to include them in "View All" mode
+      // If filtering by employee, only fetch that employee's assignments
       if (hasEmployeeFilter) {
         // First, get the employee name
         const { data: employeeData, error: empNameError } = await supabase
@@ -2721,6 +2723,51 @@ export function registerRoutes(app: Express) {
         
         if (!empAssignError && empAssignments) {
           employeeAssignmentsData = empAssignments || [];
+        }
+      } else {
+        // When no employee filter, fetch all active employee assignments to show them in "View All"
+        // But we need to limit to assets we're already showing (filteredAssetIds if any)
+        let empAssignQuery = supabase
+          .from("employee_asset_assignments")
+          .select(`
+            id,
+            batch_id,
+            serial_number,
+            barcode,
+            employee_id,
+            assignment_date,
+            batch:asset_purchase_batches!inner(asset_id, purchase_price)
+          `)
+          .eq("is_active", true);
+        
+        // If we have filtered asset IDs, we need to filter by batch asset_id
+        // But since we can't directly filter by nested asset_id, we'll fetch all and filter in code
+        const { data: empAssignments, error: empAssignError } = await empAssignQuery;
+        
+        if (!empAssignError && empAssignments) {
+          // Filter to only include assignments for assets we're showing
+          if (filteredAssetIds && filteredAssetIds.length > 0) {
+            employeeAssignmentsData = empAssignments.filter((ea: any) => 
+              ea.batch && filteredAssetIds.includes(ea.batch.asset_id)
+            );
+          } else {
+            employeeAssignmentsData = empAssignments;
+          }
+          
+          // Build employee name map for all employees in the results
+          const employeeIds = Array.from(new Set(employeeAssignmentsData.map((ea: any) => ea.employee_id)));
+          if (employeeIds.length > 0) {
+            const { data: allEmployees, error: empNameError } = await supabase
+              .from("employees")
+              .select("id, name")
+              .in("id", employeeIds);
+            
+            if (!empNameError && allEmployees) {
+              allEmployees.forEach((emp: any) => {
+                employeeNameMap.set(emp.id, emp.name);
+              });
+            }
+          }
         }
       }
 
@@ -2833,8 +2880,27 @@ export function registerRoutes(app: Express) {
           }
         });
 
-        // Note: Employee assignments are handled earlier when hasEmployeeFilter is true
-        // This section only processes station assignments
+        // E. Add employee assignments for this asset (when not filtering by employee)
+        // This ensures employee-assigned assets show up in "View All" mode
+        if (!hasEmployeeFilter) {
+          const assetBatchIds = new Set((asset.batches || []).map((b: any) => b.id));
+          employeeAssignmentsData.forEach((empAssign: any) => {
+            if (empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id) {
+              const employeeName = employeeNameMap.get(empAssign.employee_id) || null;
+              result.push({
+                ...asset,
+                pump_id: null,
+                pumpName: null,
+                employeeName: employeeName,
+                employee_id: empAssign.employee_id,
+                assignmentQuantity: 1,
+                serial_number: empAssign.serial_number || null,
+                barcode: empAssign.barcode || null,
+                assignmentValue: empAssign.batch.purchase_price || 0,
+              });
+            }
+          });
+        }
 
         return result;
       });
