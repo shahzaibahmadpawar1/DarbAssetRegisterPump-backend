@@ -128,9 +128,10 @@ function registerRoutes(app) {
                 const batchIdsForAssets = batchRows.map((b) => b.id);
                 if (batchIdsForAssets.length > 0) {
                     // Then fetch employee assignments for those batches (only active)
+                    // Include employee name to avoid N+1 queries in frontend
                     const { data, error } = await supabaseClient_1.supabase
                         .from("employee_asset_assignments")
-                        .select("id, batch_id, employee_id, is_active")
+                        .select("id, batch_id, employee_id, is_active, serial_number, barcode, assignment_date, employee:employees(name)")
                         .in("batch_id", batchIdsForAssets)
                         .eq("is_active", true);
                     if (error) {
@@ -288,6 +289,16 @@ function registerRoutes(app) {
                 return batchToAssetMap.get(ea.batch_id) === asset.id;
             });
             const totalAssignedToEmployees = employeeAssignmentsForAsset.length;
+            // Format employee assignments to send to frontend (prevents N+1 queries)
+            const activeEmployeeAssignments = employeeAssignmentsForAsset.map((ea) => ({
+                id: ea.id,
+                employee_id: ea.employee_id,
+                employee_name: ea.employee?.name || null,
+                serial_number: ea.serial_number || null,
+                barcode: ea.barcode || null,
+                batch_id: ea.batch_id,
+                assignment_date: ea.assignment_date || null,
+            }));
             // Total assigned (stations + employees) for backward compatibility
             const totalAssigned = totalAssignedToStations + totalAssignedToEmployees;
             const totalAssignedValue = assignmentList.reduce((total, assignment) => total + (assignment.assignment_value || 0), 0);
@@ -313,6 +324,7 @@ function registerRoutes(app) {
                     remaining_quantity: Number(b.remaining_quantity),
                     remarks: b.remarks || null,
                 })),
+                employee_assignments: activeEmployeeAssignments, // Include employee assignments to prevent N+1 queries
                 totalAssigned, // Total (stations + employees) for backward compatibility
                 totalAssignedToStations, // New: Only station assignments
                 totalAssignedToEmployees, // New: Only employee assignments
@@ -2366,7 +2378,7 @@ function registerRoutes(app) {
                         if (empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id) {
                             // Get employee name from the map we created
                             const employeeName = employeeNameMap.get(empAssign.employee_id) || null;
-                            result.push({
+                            const resultItem = {
                                 ...asset,
                                 // Explicitly override all station-related fields to null
                                 pump_id: null,
@@ -2378,7 +2390,8 @@ function registerRoutes(app) {
                                 serial_number: empAssign.serial_number || null,
                                 barcode: empAssign.barcode || null,
                                 assignmentValue: empAssign.batch.purchase_price || 0,
-                            });
+                            };
+                            result.push(resultItem);
                         }
                     });
                     return result;
