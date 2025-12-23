@@ -2819,21 +2819,10 @@ export function registerRoutes(app: Express) {
           return [];
         }
 
-        // C. If no station selected (View All) and asset is unassigned, show ghost row.
+        // C. If no station selected (View All) and asset has no assignments with items, skip it
+        // We only want to show items, not unassigned assets
         if (!hasPumpFilter && relevantAssignments.length === 0) {
-          return [
-            {
-              ...asset,
-              assignmentQuantity: 0,
-              pump_id: null,
-              pumpName: null,
-              employeeName: null,
-              employee_id: null,
-              serial_number: null,
-              barcode: null,
-              assignmentValue: 0,
-            },
-          ];
+          return []; // Don't show unassigned assets - we only want items
         }
 
         const result: any[] = [];
@@ -2843,7 +2832,8 @@ export function registerRoutes(app: Express) {
         relevantAssignments.forEach((assignment: any) => {
           const batchAllocations = assignment.batch_allocations || [];
           
-          // If there are batch allocations with serial numbers/barcodes, create one row per allocation
+          // ONLY create rows for items that have batch allocations (serial numbers/barcodes)
+          // Skip assignments without individual item identifiers - we only want to show items, not assets
           if (batchAllocations.length > 0) {
             batchAllocations.forEach((alloc: any) => {
               result.push({
@@ -2861,23 +2851,8 @@ export function registerRoutes(app: Express) {
                   (Number(asset.asset_value) || 0)),
               });
             });
-          } else {
-            // Fallback: if no batch allocations, use the old format but still include serial/barcode fields
-            result.push({
-              ...asset, // Keeps parent asset info
-              assignmentQuantity: assignment.quantity,
-              pump_id: assignment.pump_id,
-              pumpName: assignment.pump_name,
-              employeeName: null,
-              employee_id: null,
-              serial_number: null,
-              barcode: null,
-              assignmentValue:
-                assignment.assignment_value ??
-                Number(assignment.quantity || 0) *
-                (Number(asset.asset_value) || 0),
-            });
           }
+          // REMOVED: Fallback that creates rows without batch allocations - we only want items
         });
 
         // E. Add employee assignments for this asset (when not filtering by employee)

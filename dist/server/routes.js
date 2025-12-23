@@ -2449,28 +2449,18 @@ function registerRoutes(app) {
                 if (hasPumpFilter && relevantAssignments.length === 0) {
                     return [];
                 }
-                // C. If no station selected (View All) and asset is unassigned, show ghost row.
+                // C. If no station selected (View All) and asset has no assignments with items, skip it
+                // We only want to show items, not unassigned assets
                 if (!hasPumpFilter && relevantAssignments.length === 0) {
-                    return [
-                        {
-                            ...asset,
-                            assignmentQuantity: 0,
-                            pump_id: null,
-                            pumpName: null,
-                            employeeName: null,
-                            employee_id: null,
-                            serial_number: null,
-                            barcode: null,
-                            assignmentValue: 0,
-                        },
-                    ];
+                    return []; // Don't show unassigned assets - we only want items
                 }
                 const result = [];
                 // D. Map valid station assignments to rows
                 // Include batch_allocations with serial_number and barcode if they exist
                 relevantAssignments.forEach((assignment) => {
                     const batchAllocations = assignment.batch_allocations || [];
-                    // If there are batch allocations with serial numbers/barcodes, create one row per allocation
+                    // ONLY create rows for items that have batch allocations (serial numbers/barcodes)
+                    // Skip assignments without individual item identifiers - we only want to show items, not assets
                     if (batchAllocations.length > 0) {
                         batchAllocations.forEach((alloc) => {
                             result.push({
@@ -2489,22 +2479,7 @@ function registerRoutes(app) {
                             });
                         });
                     }
-                    else {
-                        // Fallback: if no batch allocations, use the old format but still include serial/barcode fields
-                        result.push({
-                            ...asset, // Keeps parent asset info
-                            assignmentQuantity: assignment.quantity,
-                            pump_id: assignment.pump_id,
-                            pumpName: assignment.pump_name,
-                            employeeName: null,
-                            employee_id: null,
-                            serial_number: null,
-                            barcode: null,
-                            assignmentValue: assignment.assignment_value ??
-                                Number(assignment.quantity || 0) *
-                                    (Number(asset.asset_value) || 0),
-                        });
-                    }
+                    // REMOVED: Fallback that creates rows without batch allocations - we only want items
                 });
                 // E. Add employee assignments for this asset (when not filtering by employee)
                 // This ensures employee-assigned assets show up in "View All" mode
