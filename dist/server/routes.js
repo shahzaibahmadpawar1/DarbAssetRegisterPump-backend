@@ -2365,14 +2365,29 @@ function registerRoutes(app) {
           `)
                     .eq("is_active", true);
                 const { data: empAssignments, error: empAssignError } = await empAssignQuery;
+                console.log(`[DEBUG] Fetched ${empAssignments?.length || 0} employee assignments`);
+                if (empAssignments && empAssignments.length > 0) {
+                    const sample = empAssignments[0];
+                    console.log(`[DEBUG] Sample employee assignment:`, {
+                        id: sample.id,
+                        employee_id: sample.employee_id,
+                        batch_id: sample.batch_id,
+                        batch_asset_id: sample.batch?.asset_id,
+                        serial_number: sample.serial_number,
+                        barcode: sample.barcode
+                    });
+                }
                 if (!empAssignError && empAssignments) {
                     employeeAssignmentsData = empAssignments;
                     // Collect asset IDs from employee assignments
                     empAssignments.forEach((ea) => {
-                        if (ea.batch && ea.batch.asset_id) {
-                            employeeAssetIdsSet.add(ea.batch.asset_id);
+                        const batch = ea.batch;
+                        if (batch && batch.asset_id) {
+                            employeeAssetIdsSet.add(batch.asset_id);
                         }
                     });
+                    console.log(`[DEBUG] Collected ${employeeAssetIdsSet.size} unique asset IDs from employee assignments`);
+                    console.log(`[DEBUG] Collected ${employeeAssetIdsSet.size} unique asset IDs from employee assignments`);
                     // Build employee name map for all employees in the results
                     const employeeIds = Array.from(new Set(employeeAssignmentsData.map((ea) => ea.employee_id).filter((id) => id != null)));
                     if (employeeIds.length > 0) {
@@ -2534,8 +2549,24 @@ function registerRoutes(app) {
                 // IMPORTANT: Include employee assignments even if asset has no station assignments
                 if (!hasEmployeeFilter) {
                     const assetBatchIds = new Set((asset.batches || []).map((b) => b.id));
+                    console.log(`[DEBUG] Processing asset ${asset.id} (${asset.asset_name}), batch IDs:`, Array.from(assetBatchIds));
+                    console.log(`[DEBUG] Total employee assignments to check: ${employeeAssignmentsData.length}`);
+                    let matchedCount = 0;
                     employeeAssignmentsData.forEach((empAssign) => {
-                        if (empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id) {
+                        const batch = empAssign.batch;
+                        const batchMatches = batch && assetBatchIds.has(batch.id);
+                        const assetMatches = batch?.asset_id === asset.id;
+                        if (batchMatches && assetMatches) {
+                            matchedCount++;
+                        }
+                        if (batch?.asset_id === asset.id && !assetBatchIds.has(batch.id)) {
+                            console.log(`[DEBUG] Employee assignment batch ${batch.id} belongs to asset ${asset.id} but batch not in asset.batches`);
+                        }
+                    });
+                    console.log(`[DEBUG] Matched ${matchedCount} employee assignments for asset ${asset.id}`);
+                    employeeAssignmentsData.forEach((empAssign) => {
+                        const batch = empAssign.batch;
+                        if (batch && assetBatchIds.has(batch.id) && batch.asset_id === asset.id) {
                             const employeeName = employeeNameMap.get(empAssign.employee_id) || null;
                             // Debug logging
                             if (!employeeName && empAssign.employee_id) {
@@ -2551,7 +2582,7 @@ function registerRoutes(app) {
                                 assignmentQuantity: 1,
                                 serial_number: empAssign.serial_number || null,
                                 barcode: empAssign.barcode || null,
-                                assignmentValue: empAssign.batch.purchase_price || 0,
+                                assignmentValue: batch.purchase_price || 0,
                             });
                         }
                     });
