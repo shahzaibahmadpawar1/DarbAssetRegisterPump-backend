@@ -22,7 +22,9 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 const allowedOrigins = [
   "https://azharalibuttar.com",
   "https://www.azharalibuttar.com",
-  "http://ams.darbstations.com.sa/" // dev
+  "http://ams.darbstations.com.sa/",
+  "https://ams.darbstations.com.sa/"
+   // dev
 ];
 
 app.use(
