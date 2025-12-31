@@ -22,8 +22,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 // ✅ CORS CONFIGURATION (single use)
 // ===============================
 const allowedOrigins = [
-    "https://azharalibuttar.com",
-    "https://www.azharalibuttar.com",
+    "https://ams.darbstations.com.sa",
     "http://ams.darbstations.com.sa",
     "https://www.ams.darbstations.com.sa"
     // dev
@@ -76,7 +75,7 @@ app.use((0, express_session_1.default)({
         secure: process.env.NODE_ENV === "production",
         sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
         maxAge: 7 * 24 * 60 * 60 * 1000,
-        domain: process.env.NODE_ENV === "production" ? ".ams.darbstatios.com.sa" : undefined,
+        domain: process.env.NODE_ENV === "production" ? ".ams.darbstations.com.sa" : undefined,
     },
 }));
 // ✅ Routes
