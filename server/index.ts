@@ -12,7 +12,7 @@ const app = express();
 // ===============================
 // ✅ Config
 // ===============================
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://azharalibuttar.com";
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "http://ams.darbstations.com.sa/";
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
 const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 
@@ -22,7 +22,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 const allowedOrigins = [
   "https://azharalibuttar.com",
   "https://www.azharalibuttar.com",
-  "http://localhost:5173", // dev
+  "http://ams.darbstations.com.sa/" // dev
 ];
 
 app.use(

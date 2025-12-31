@@ -757,14 +757,14 @@ export function registerRoutes(app: Express) {
 
     // Determine if we're in production based on origin
     const origin = req.headers.origin || "";
-    const isProduction = origin.includes("azharalibuttar.com") || process.env.NODE_ENV === "production";
+    const isProduction = origin.includes("ams.darbstations.com.sa/") || process.env.NODE_ENV === "production";
     
     if (isProduction) {
       cookieOptions.secure = true;
       cookieOptions.sameSite = "none";
       // Set domain for production
-      if (origin.includes("azharalibuttar.com")) {
-        cookieOptions.domain = ".azharalibuttar.com";
+      if (origin.includes("ams.darbstations.com.sa/")) {
+        cookieOptions.domain = ".ams.darbstations.com.sa/";
       }
     } else {
       cookieOptions.secure = false;
@@ -781,7 +781,7 @@ export function registerRoutes(app: Express) {
   app.post("/api/logout", (req: Request, res: Response) => {
     // Determine cookie options to match login (must match exactly to clear properly)
     const origin = req.headers.origin || "";
-    const isProduction = origin.includes("azharalibuttar.com") || process.env.NODE_ENV === "production";
+    const isProduction = origin.includes("ams.darbstations.com.sa/") || process.env.NODE_ENV === "production";
     
     const clearCookieOptions: any = {
       path: "/",
@@ -791,8 +791,8 @@ export function registerRoutes(app: Express) {
     if (isProduction) {
       clearCookieOptions.secure = true;
       clearCookieOptions.sameSite = "none";
-      if (origin.includes("azharalibuttar.com")) {
-        clearCookieOptions.domain = ".azharalibuttar.com";
+      if (origin.includes("ams.darbstations.com.sa/")) {
+        clearCookieOptions.domain = ".ams.darbstations.com.sa/";
       }
     } else {
       clearCookieOptions.secure = false;

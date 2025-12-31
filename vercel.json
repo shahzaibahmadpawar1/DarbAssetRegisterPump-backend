@@ -8,7 +8,7 @@
     { "src": "/(.*)", "dest": "dist/server/index.js" }
   ],
   "env": {
-    "FRONTEND_ORIGIN": "https://azharalibuttar.com",
+    "FRONTEND_ORIGIN": "http://ams.darbstations.com.sa/",
     "JWT_SECRET": "super-secret-key",
     "SESSION_SECRET": "super-session-key"
   }
