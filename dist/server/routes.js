@@ -630,9 +630,6 @@ function registerRoutes(app) {
             cookieOptions.secure = true;
             cookieOptions.sameSite = "none";
             // Set domain for production
-            if (origin.includes("ams.darbstations.com.sa")) {
-                cookieOptions.domain = ".ams.darbstations.com.sa";
-            }
         }
         else {
             cookieOptions.secure = false;
@@ -654,9 +651,6 @@ function registerRoutes(app) {
         if (isProduction) {
             clearCookieOptions.secure = true;
             clearCookieOptions.sameSite = "none";
-            if (origin.includes("ams.darbstations.com.sa")) {
-                clearCookieOptions.domain = ".ams.darbstations.com.sa";
-            }
         }
         else {
             clearCookieOptions.secure = false;

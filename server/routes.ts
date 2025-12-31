@@ -763,9 +763,6 @@ export function registerRoutes(app: Express) {
       cookieOptions.secure = true;
       cookieOptions.sameSite = "none";
       // Set domain for production
-      if (origin.includes("ams.darbstations.com.sa")) {
-        cookieOptions.domain = ".ams.darbstations.com.sa";
-      }
     } else {
       cookieOptions.secure = false;
       cookieOptions.sameSite = "lax";
@@ -791,9 +788,6 @@ export function registerRoutes(app: Express) {
     if (isProduction) {
       clearCookieOptions.secure = true;
       clearCookieOptions.sameSite = "none";
-      if (origin.includes("ams.darbstations.com.sa")) {
-        clearCookieOptions.domain = ".ams.darbstations.com.sa";
-      }
     } else {
       clearCookieOptions.secure = false;
       clearCookieOptions.sameSite = "lax";
