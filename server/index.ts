@@ -12,7 +12,7 @@ const app = express();
 // ===============================
 // ✅ Config
 // ===============================
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://ams.darbstations.com.sa/";
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://ams.darbstations.com.sa/"||"https://www.stg.ams.darbstations.com.sa";
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
 const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 
@@ -22,7 +22,9 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 const allowedOrigins = [
   "https://ams.darbstations.com.sa",
   "http://ams.darbstations.com.sa",
-  "https://www.ams.darbstations.com.sa"
+  "https://www.ams.darbstations.com.sa",
+  "http://www.stg.ams.darbstations.com.sa",
+  "https://www.stg.ams.darbstations.com.sa"
    // dev
 ];
 
