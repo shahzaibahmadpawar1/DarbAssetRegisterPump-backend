@@ -15,7 +15,7 @@ const app = (0, express_1.default)();
 // ===============================
 // ✅ Config
 // ===============================
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://ams.darbstations.com.sa/" || "https://www.stg.ams.darbstations.com.sa";
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://stg.ams.darbstations.com.sa/";
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
 const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 // ===============================
@@ -25,8 +25,8 @@ const allowedOrigins = [
     "https://ams.darbstations.com.sa",
     "http://ams.darbstations.com.sa",
     "https://www.ams.darbstations.com.sa",
-    "http://www.stg.ams.darbstations.com.sa",
-    "https://www.stg.ams.darbstations.com.sa"
+    "http://stg.ams.darbstations.com.sa",
+    "https://stg.ams.darbstations.com.sa"
     // dev
 ];
 app.use((0, cors_1.default)({
@@ -77,7 +77,7 @@ app.use((0, express_session_1.default)({
         secure: process.env.NODE_ENV === "production",
         sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
         maxAge: 7 * 24 * 60 * 60 * 1000,
-        domain: process.env.NODE_ENV === "production" ? ".ams.darbstations.com.sa" : undefined,
+        domain: process.env.NODE_ENV === "production" ? ".stg.ams.darbstations.com.sa" : undefined,
     },
 }));
 // ✅ Routes

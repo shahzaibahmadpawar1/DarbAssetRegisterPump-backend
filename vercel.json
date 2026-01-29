@@ -1,14 +1,23 @@
 {
   "version": 2,
   "builds": [
-    { "src": "dist/server/index.js", "use": "@vercel/node" }
+    {
+      "src": "dist/server/index.js",
+      "use": "@vercel/node"
+    }
   ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "dist/server/index.js" },
-    { "src": "/(.*)", "dest": "dist/server/index.js" }
+    {
+      "src": "/api/(.*)",
+      "dest": "dist/server/index.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "dist/server/index.js"
+    }
   ],
   "env": {
-    "FRONTEND_ORIGIN": "http://ams.darbstations.com.sa/",
+    "FRONTEND_ORIGIN": "http://stg.ams.darbstations.com.sa/",
     "JWT_SECRET": "super-secret-key",
     "SESSION_SECRET": "super-session-key"
   }

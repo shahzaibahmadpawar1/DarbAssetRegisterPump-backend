@@ -12,7 +12,7 @@ const app = express();
 // ===============================
 // ✅ Config
 // ===============================
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://ams.darbstations.com.sa/"||"https://www.stg.ams.darbstations.com.sa";
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://stg.ams.darbstations.com.sa/";
 const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
 const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 
@@ -23,9 +23,9 @@ const allowedOrigins = [
   "https://ams.darbstations.com.sa",
   "http://ams.darbstations.com.sa",
   "https://www.ams.darbstations.com.sa",
-  "http://www.stg.ams.darbstations.com.sa",
-  "https://www.stg.ams.darbstations.com.sa"
-   // dev
+  "http://stg.ams.darbstations.com.sa",
+  "https://stg.ams.darbstations.com.sa"
+  // dev
 ];
 
 app.use(
@@ -52,7 +52,7 @@ app.use(cookieParser());
 app.use((req: any, _res, next) => {
   // Try cookie first
   let token = req.cookies?.token;
-  
+
   // If no cookie, try Authorization header
   if (!token) {
     const authHeader = req.headers.authorization;
@@ -60,7 +60,7 @@ app.use((req: any, _res, next) => {
       token = authHeader.substring(7);
     }
   }
-  
+
   if (token) {
     try { req.user = jwt.verify(token, JWT_SECRET); } catch { /* ignore */ }
   }
@@ -81,7 +81,7 @@ app.use(
       secure: process.env.NODE_ENV === "production",
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
-      domain: process.env.NODE_ENV === "production" ? ".ams.darbstations.com.sa" : undefined,
+      domain: process.env.NODE_ENV === "production" ? ".stg.ams.darbstations.com.sa" : undefined,
     },
   })
 );
