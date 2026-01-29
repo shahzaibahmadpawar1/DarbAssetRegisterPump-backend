@@ -27,7 +27,7 @@ export function registerRoutes(app: Express) {
 
         const decoded = jwt.verify(token, JWT_SECRET) as any;
         console.log("[AUTH] Token decoded:", { userId: decoded.userId, role: decoded.role });
-        
+
         const { data: user, error } = await supabase
           .from("users")
           .select("id, username, role")
@@ -96,7 +96,7 @@ export function registerRoutes(app: Express) {
     input.forEach((assignment) => {
       const pumpId = Number(assignment?.pump_id);
       if (!Number.isFinite(pumpId) || pumpId <= 0) return;
-      
+
       const items: AssignmentItem[] = [];
       if (Array.isArray(assignment.items)) {
         assignment.items.forEach((item: any) => {
@@ -109,7 +109,7 @@ export function registerRoutes(app: Express) {
           });
         });
       }
-      
+
       if (items.length > 0) {
         result.push({ pump_id: pumpId, items });
       }
@@ -124,7 +124,7 @@ export function registerRoutes(app: Express) {
     if (!assets || assets.length === 0) return { data: [], error: null as any };
 
     const assetIds = assets.map((a: any) => a.id);
-    
+
     const [
       { data: cats, error: catError },
       { data: pumps, error: pumpError },
@@ -135,15 +135,15 @@ export function registerRoutes(app: Express) {
       supabase.from("pumps").select("id, name"),
       assetIds.length > 0
         ? supabase
-            .from("asset_assignments")
-            .select("id, asset_id, pump_id, quantity, created_at, pumps(name)")
-            .in("asset_id", assetIds)
+          .from("asset_assignments")
+          .select("id, asset_id, pump_id, quantity, created_at, pumps(name)")
+          .in("asset_id", assetIds)
         : Promise.resolve({ data: [], error: null }),
       assetIds.length > 0
         ? supabase
-            .from("asset_purchase_batches")
-            .select("*")
-            .in("asset_id", assetIds)
+          .from("asset_purchase_batches")
+          .select("*")
+          .in("asset_id", assetIds)
         : Promise.resolve({ data: [], error: null }),
     ]);
 
@@ -151,12 +151,12 @@ export function registerRoutes(app: Express) {
     // Note: employee_asset_assignments doesn't have asset_id directly, need to join through batches
     let employeeAssignmentRows: any[] = [];
     let employeeAssignmentError: any = null;
-    
+
     if (assetIds.length > 0 && batchRows && batchRows.length > 0) {
       try {
         // Get all batch IDs for these assets
         const batchIdsForAssets = batchRows.map((b: any) => b.id);
-        
+
         if (batchIdsForAssets.length > 0) {
           // Then fetch employee assignments for those batches (only active)
           // Include employee name to avoid N+1 queries in frontend
@@ -183,14 +183,14 @@ export function registerRoutes(app: Express) {
     const assignmentIds = (assignmentRows || []).map((r: any) => r.id);
     let allocationRows: any[] = [];
     let allocationError: any = null;
-    
+
     if (assignmentIds.length > 0) {
       // First fetch allocations
       const { data: allocs, error: allocErr } = await supabase
         .from("assignment_batch_allocations")
         .select("id, assignment_id, batch_id, serial_number, barcode")
         .in("assignment_id", assignmentIds);
-      
+
       if (allocErr) {
         allocationError = allocErr;
       } else if (allocs && allocs.length > 0) {
@@ -201,7 +201,7 @@ export function registerRoutes(app: Express) {
             .from("asset_purchase_batches")
             .select("id, batch_name, purchase_date, purchase_price")
             .in("id", batchIds);
-          
+
           if (batchErr) {
             allocationError = batchErr;
           } else {
@@ -272,17 +272,17 @@ export function registerRoutes(app: Express) {
     (assignmentRows || []).forEach((row: any) => {
       const collection = assignmentsByAsset.get(row.asset_id) || [];
       const batchAllocations = allocationsByAssignment.get(row.id) || [];
-      
+
       // Add assignment_date to each batch allocation (use created_at as assignment date for station assignments)
       const batchAllocationsWithDate = batchAllocations.map((alloc: any) => ({
         ...alloc,
         assignment_date: row.created_at || null, // Use created_at since assignment_date doesn't exist in asset_assignments
       }));
-      
+
       // Calculate quantity from batch allocations (count of items)
       const calculatedQuantity = batchAllocationsWithDate.reduce((sum: number, alloc: any) => sum + (alloc.quantity || 0), 0);
       const assignmentQuantity = calculatedQuantity > 0 ? calculatedQuantity : (row.quantity || 0);
-      
+
       // Calculate assignment value from batch allocations
       // Each allocation in batchAllocations has quantity (count of items) and unit_price
       const assignmentValue = batchAllocationsWithDate.length > 0
@@ -329,7 +329,7 @@ export function registerRoutes(app: Express) {
         },
         0
       );
-      
+
       // Calculate total assigned to employees
       // Employee assignments are linked to assets through batches
       // Create a map of batch_id -> asset_id from the batches
@@ -337,7 +337,7 @@ export function registerRoutes(app: Express) {
       batches.forEach((batch: any) => {
         batchToAssetMap.set(batch.id, asset.id);
       });
-      
+
       // Filter employee assignments where the batch belongs to this asset
       const employeeAssignmentsForAsset = (employeeAssignmentRows || []).filter((ea: any) => {
         if (!ea || !ea.batch_id) return false;
@@ -355,10 +355,10 @@ export function registerRoutes(app: Express) {
         batch_id: ea.batch_id,
         assignment_date: ea.assignment_date || null,
       }));
-      
+
       // Total assigned (stations + employees) for backward compatibility
       const totalAssigned = totalAssignedToStations + totalAssignedToEmployees;
-      
+
       const totalAssignedValue = assignmentList.reduce(
         (total: number, assignment: any) =>
           total + (assignment.assignment_value || 0),
@@ -671,7 +671,7 @@ export function registerRoutes(app: Express) {
     const { error } = await supabase
       .from("assignment_batch_allocations")
       .insert(rows);
-    
+
     if (error) {
       // Provide more detailed error message
       let errorMessage = error.message || "Failed to create batch allocations";
@@ -682,7 +682,7 @@ export function registerRoutes(app: Express) {
           errorMessage = "A barcode you entered already exists. Please use a unique barcode.";
         }
       }
-      return { 
+      return {
         error: {
           message: errorMessage,
           details: error.details || null,
@@ -701,18 +701,18 @@ export function registerRoutes(app: Express) {
       .from("assignment_batch_allocations")
       .select("batch_id")
       .eq("assignment_id", assignmentId);
-    
+
     if (error || !allocations) return 0;
-    
+
     // Get batch prices
     const batchIds = allocations.map((a: any) => a.batch_id);
     const { data: batches } = await supabase
       .from("asset_purchase_batches")
       .select("purchase_price")
       .in("id", batchIds);
-    
+
     if (!batches) return 0;
-    
+
     // Each allocation is one item, so sum up the prices
     return batches.reduce((sum, batch) => sum + Number(batch.purchase_price), 0);
   };
@@ -757,8 +757,8 @@ export function registerRoutes(app: Express) {
 
     // Determine if we're in production based on origin
     const origin = req.headers.origin || "";
-    const isProduction = origin.includes("ams.darbstations.com.sa") || process.env.NODE_ENV === "production";
-    
+    const isProduction = origin.includes("stg.ams.darbstations.com.sa") || process.env.NODE_ENV === "production";
+
     if (isProduction) {
       cookieOptions.secure = true;
       cookieOptions.sameSite = "none";
@@ -779,12 +779,12 @@ export function registerRoutes(app: Express) {
     // Determine cookie options to match login (must match exactly to clear properly)
     const origin = req.headers.origin || "";
     const isProduction = origin.includes("ams.darbstations.com.sa") || process.env.NODE_ENV === "production";
-    
+
     const clearCookieOptions: any = {
       path: "/",
       httpOnly: true,
     };
-    
+
     if (isProduction) {
       clearCookieOptions.secure = true;
       clearCookieOptions.sameSite = "none";
@@ -792,10 +792,10 @@ export function registerRoutes(app: Express) {
       clearCookieOptions.secure = false;
       clearCookieOptions.sameSite = "lax";
     }
-    
+
     // Clear cookie with matching options
     res.clearCookie(TOKEN_COOKIE_NAME, clearCookieOptions);
-    
+
     // Also try clearing without domain (in case domain was set differently)
     if (clearCookieOptions.domain) {
       res.clearCookie(TOKEN_COOKIE_NAME, {
@@ -803,7 +803,7 @@ export function registerRoutes(app: Express) {
         domain: undefined,
       });
     }
-    
+
     console.log("[LOGOUT] Cleared authentication cookie");
     res.json({ ok: true });
   });
@@ -811,7 +811,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/me", async (req: Request, res: Response) => {
     // Try to get token from cookie first
     let token = (req as any).cookies?.[TOKEN_COOKIE_NAME];
-    
+
     // If no cookie token, try Authorization header (for localStorage fallback)
     if (!token) {
       const authHeader = req.headers.authorization;
@@ -827,7 +827,7 @@ export function registerRoutes(app: Express) {
     try {
       const decoded = jwt.verify(token, JWT_SECRET) as any;
       console.log("[API/ME] Token decoded:", { userId: decoded.userId, roleInToken: decoded.role });
-      
+
       const { data, error } = await supabase
         .from("users")
         .select("id, username, role")
@@ -838,7 +838,7 @@ export function registerRoutes(app: Express) {
         console.error("[API/ME] User not found:", { userId: decoded.userId, error });
         return res.status(200).json({ authenticated: false });
       }
-      
+
       console.log("[API/ME] Returning user data:", { id: data.id, username: data.username, role: data.role });
       return res.json({ authenticated: true, user: data });
     } catch (err: any) {
@@ -872,12 +872,12 @@ export function registerRoutes(app: Express) {
           .from("assignment_batch_allocations")
           .select("assignment_id, batch_id")
           .in("assignment_id", assignmentIds);
-        
+
         if (allocationErr)
           return res.status(500).json({ message: allocationErr.message });
-        
+
         allocationRows = allocations || [];
-        
+
         // Get batch prices
         const batchIds = Array.from(new Set(allocationRows.map((a: any) => a.batch_id)));
         if (batchIds.length > 0) {
@@ -885,16 +885,16 @@ export function registerRoutes(app: Express) {
             .from("asset_purchase_batches")
             .select("id, purchase_price")
             .in("id", batchIds);
-          
+
           if (batchErr)
             return res.status(500).json({ message: batchErr.message });
-          
+
           // Create a map of batch_id to purchase_price
           const batchPriceMap = new Map<number, number>();
           (batches || []).forEach((b: any) => {
             batchPriceMap.set(b.id, Number(b.purchase_price || 0));
           });
-          
+
           // Add purchase_price to each allocation
           allocationRows = allocationRows.map((alloc: any) => ({
             ...alloc,
@@ -906,7 +906,7 @@ export function registerRoutes(app: Express) {
       const seen = new Set<string>();
       const assetCountMap = new Map<number, number>();
       const assetValueMap = new Map<number, number>();
-      
+
       // Create a map of assignment_id to pump_id
       const assignmentToPump = new Map<number, number>();
       (assignmentRows || []).forEach((row: any) => {
@@ -1081,16 +1081,16 @@ export function registerRoutes(app: Express) {
         `)
         .order("name", { ascending: true });
       if (error) return res.status(500).json({ message: error.message });
-      
+
       // Transform data to include department name and asset assignments
       const transformed = (data || []).map((emp: any) => {
         const departmentAssignment = emp.department_assignments?.[0];
-        
+
         // Filter to only active assignments (is_active = true or NULL for pre-migration records)
-        const activeAssignments = (emp.asset_assignments || []).filter((assignment: any) => 
+        const activeAssignments = (emp.asset_assignments || []).filter((assignment: any) =>
           assignment.is_active === true || assignment.is_active === null
         );
-        
+
         // Group asset assignments by asset and batch
         const assetAssignments = activeAssignments.map((assignment: any) => ({
           id: assignment.id,
@@ -1107,7 +1107,7 @@ export function registerRoutes(app: Express) {
             asset_number: assignment.batch.asset.asset_number,
           } : null,
         }));
-        
+
         // Group by asset and batch to show quantities
         const assetSummary = new Map<string, {
           asset_id: number;
@@ -1121,10 +1121,10 @@ export function registerRoutes(app: Express) {
             items: any[];
           }>;
         }>();
-        
+
         assetAssignments.forEach((assignment: any) => {
           if (!assignment.asset) return;
-          
+
           const assetKey = `${assignment.asset.id}`;
           if (!assetSummary.has(assetKey)) {
             assetSummary.set(assetKey, {
@@ -1134,7 +1134,7 @@ export function registerRoutes(app: Express) {
               batches: new Map(),
             });
           }
-          
+
           const asset = assetSummary.get(assetKey)!;
           const batchKey = assignment.batch_id;
           if (!asset.batches.has(batchKey)) {
@@ -1146,12 +1146,12 @@ export function registerRoutes(app: Express) {
               items: [],
             });
           }
-          
+
           const batch = asset.batches.get(batchKey)!;
           batch.quantity += 1;
           batch.items.push(assignment);
         });
-        
+
         // Convert to array format
         const assetAssignmentsSummary = Array.from(assetSummary.values()).map(asset => ({
           asset_id: asset.asset_id,
@@ -1159,7 +1159,7 @@ export function registerRoutes(app: Express) {
           asset_number: asset.asset_number,
           batches: Array.from(asset.batches.values()),
         }));
-        
+
         return {
           id: emp.id,
           name: emp.name,
@@ -1168,7 +1168,7 @@ export function registerRoutes(app: Express) {
           asset_assignments: assetAssignmentsSummary,
         };
       });
-      
+
       res.json(transformed);
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Internal error" });
@@ -1216,7 +1216,7 @@ export function registerRoutes(app: Express) {
   app.post("/api/employees/bulk", requireAdminPermission, async (req, res) => {
     try {
       const { employees } = req.body;
-      
+
       if (!Array.isArray(employees) || employees.length === 0) {
         return res.status(400).json({ message: "employees array is required and must not be empty" });
       }
@@ -1242,9 +1242,9 @@ export function registerRoutes(app: Express) {
       }
 
       if (errors.length > 0) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           message: "Validation errors found",
-          errors 
+          errors
         });
       }
 
@@ -1268,7 +1268,7 @@ export function registerRoutes(app: Express) {
       for (let i = 0; i < createdEmployees.length; i++) {
         const employee = createdEmployees[i];
         const originalEmp = validEmployees[i];
-        
+
         if (originalEmp.department_id) {
           departmentAssignments.push({
             employee_id: employee.id,
@@ -1402,25 +1402,25 @@ export function registerRoutes(app: Express) {
 
         if (batchError || !batch)
           return res.status(404).json({ message: `Batch ${batchId} not found` });
-        
+
         // Count how many items from this batch are already assigned to employees (only active)
         const { count: employeeAssignedCount, error: countError } = await supabase
           .from("employee_asset_assignments")
           .select("*", { count: "exact", head: true })
           .eq("batch_id", batchId)
           .eq("is_active", true);
-        
+
         if (countError) {
           console.error("Error counting employee assignments:", countError);
           return res.status(500).json({ message: "Failed to check batch availability" });
         }
-        
+
         const alreadyAssignedToEmployees = employeeAssignedCount || 0;
         const employeeRemaining = Number(batch.quantity) - alreadyAssignedToEmployees;
-        
+
         if (requestedCount > employeeRemaining) {
-          return res.status(400).json({ 
-            message: `Insufficient quantity in batch ${batchId} for employee assignment. Only ${employeeRemaining} available for employees (${alreadyAssignedToEmployees} already assigned to employees, ${batch.quantity} total in batch), but ${requestedCount} requested.` 
+          return res.status(400).json({
+            message: `Insufficient quantity in batch ${batchId} for employee assignment. Only ${employeeRemaining} available for employees (${alreadyAssignedToEmployees} already assigned to employees, ${batch.quantity} total in batch), but ${requestedCount} requested.`
           });
         }
       }
@@ -1462,7 +1462,7 @@ export function registerRoutes(app: Express) {
           }
         }
         console.error("Employee assignment error:", error);
-        return res.status(500).json({ 
+        return res.status(500).json({
           message: errorMessage,
           details: error.details || error.hint || null,
           code: error.code
@@ -1497,7 +1497,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/assignments/history", requireAuth, async (req, res) => {
     try {
       const { batch_id, asset_id } = req.query;
-      
+
       let query = supabase
         .from("employee_asset_assignments")
         .select(`
@@ -1538,9 +1538,9 @@ export function registerRoutes(app: Express) {
             .from("asset_purchase_batches")
             .select("id")
             .eq("asset_id", assetId);
-          
+
           if (batchError) return res.status(500).json({ message: batchError.message });
-          
+
           if (batches && batches.length > 0) {
             const batchIds = batches.map((b: any) => b.id);
             query = query.in("batch_id", batchIds);
@@ -1565,7 +1565,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/assets/search/barcode", requireAuth, async (req, res) => {
     try {
       const { barcode } = req.query;
-      
+
       if (!barcode || typeof barcode !== "string") {
         return res.status(400).json({ message: "barcode parameter is required" });
       }
@@ -1608,7 +1608,7 @@ export function registerRoutes(app: Express) {
 
       // Collect unique asset IDs
       const assetIds = new Set<number>();
-      
+
       if (stationAllocations) {
         stationAllocations.forEach((alloc: any) => {
           if (alloc.batch?.asset_id) {
@@ -1656,7 +1656,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/assets/search/serial", requireAuth, async (req, res) => {
     try {
       const { serial } = req.query;
-      
+
       if (!serial || typeof serial !== "string") {
         return res.status(400).json({ message: "serial parameter is required" });
       }
@@ -1699,7 +1699,7 @@ export function registerRoutes(app: Express) {
 
       // Collect unique asset IDs
       const assetIds = new Set<number>();
-      
+
       if (stationAllocations) {
         stationAllocations.forEach((alloc: any) => {
           if (alloc.batch?.asset_id) {
@@ -1748,22 +1748,22 @@ export function registerRoutes(app: Express) {
     try {
       const fromId = Number(req.params.fromId);
       const toId = Number(req.params.toId);
-      
+
       if (Number.isNaN(fromId) || Number.isNaN(toId))
         return res.status(400).json({ message: "Invalid employee ID" });
-      
+
       if (fromId === toId)
         return res.status(400).json({ message: "Cannot transfer assets to the same employee" });
 
       const { assignment_ids, transfer_date } = req.body;
       const transferDate = transfer_date ? new Date(transfer_date).toISOString() : new Date().toISOString();
-      
+
       // If assignment_ids is provided, transfer only those specific assignments
       // Otherwise, transfer all assets from the source employee
       if (assignment_ids && Array.isArray(assignment_ids) && assignment_ids.length > 0) {
         // Transfer specific assignments
         const assignmentIds = assignment_ids.map((id: any) => Number(id)).filter((id: number) => !Number.isNaN(id));
-        
+
         if (assignmentIds.length === 0)
           return res.status(400).json({ message: "No valid assignment IDs provided" });
 
@@ -1785,7 +1785,7 @@ export function registerRoutes(app: Express) {
         // Update both active and null is_active records
         const { error: deactivateError } = await supabase
           .from("employee_asset_assignments")
-          .update({ 
+          .update({
             is_active: false,
             serial_number: null,
             barcode: null
@@ -1829,7 +1829,7 @@ export function registerRoutes(app: Express) {
         // Update both active and null is_active records
         const { error: deactivateError } = await supabase
           .from("employee_asset_assignments")
-          .update({ 
+          .update({
             is_active: false,
             serial_number: null,
             barcode: null
@@ -1950,7 +1950,7 @@ export function registerRoutes(app: Express) {
         .select("*")
         .order("name", { ascending: true });
       if (error) return res.status(500).json({ message: error.message });
-      
+
       // Get employee counts and total asset value for each department
       const departmentsWithCounts = await Promise.all(
         (departments || []).map(async (dept: any) => {
@@ -1959,48 +1959,48 @@ export function registerRoutes(app: Express) {
             .from("employee_department_assignments")
             .select("*", { count: "exact", head: true })
             .eq("department_id", dept.id);
-          
+
           const employeeCount = countError ? 0 : (count || 0);
-          
+
           // Calculate total asset value from employee asset assignments
           let totalAssetValue = 0;
-          
+
           if (employeeCount > 0) {
             // Get all employees in this department
             const { data: departmentEmployees, error: empError } = await supabase
               .from("employee_department_assignments")
               .select("employee_id")
               .eq("department_id", dept.id);
-            
+
             if (!empError && departmentEmployees && departmentEmployees.length > 0) {
               const employeeIds = departmentEmployees.map((de: any) => de.employee_id);
-              
+
               // Get all employee asset assignments for these employees
               const { data: employeeAssignments, error: assignError } = await supabase
                 .from("employee_asset_assignments")
                 .select("batch_id")
                 .in("employee_id", employeeIds);
-              
+
               if (!assignError && employeeAssignments && employeeAssignments.length > 0) {
                 // Get unique batch IDs
                 const batchIds = Array.from(new Set(
                   employeeAssignments.map((ea: any) => ea.batch_id).filter((id: any) => id != null)
                 ));
-                
+
                 if (batchIds.length > 0) {
                   // Get purchase prices for these batches
                   const { data: batches, error: batchError } = await supabase
                     .from("asset_purchase_batches")
                     .select("id, purchase_price")
                     .in("id", batchIds);
-                  
+
                   if (!batchError && batches) {
                     // Create a map of batch_id to purchase_price
                     const batchPriceMap = new Map<number, number>();
                     batches.forEach((b: any) => {
                       batchPriceMap.set(b.id, Number(b.purchase_price || 0));
                     });
-                    
+
                     // Sum up the purchase prices for all employee assignments
                     employeeAssignments.forEach((ea: any) => {
                       const price = batchPriceMap.get(ea.batch_id) || 0;
@@ -2011,7 +2011,7 @@ export function registerRoutes(app: Express) {
               }
             }
           }
-          
+
           return {
             ...dept,
             employeeCount,
@@ -2019,7 +2019,7 @@ export function registerRoutes(app: Express) {
           };
         })
       );
-      
+
       res.json(departmentsWithCounts);
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Internal error" });
@@ -2199,9 +2199,9 @@ export function registerRoutes(app: Express) {
       const pumpIdParam = pump_id ?? "";
       const parsedPumpId =
         pumpIdParam &&
-        pumpIdParam !== "all" &&
-        pumpIdParam !== "null" &&
-        pumpIdParam !== "undefined"
+          pumpIdParam !== "all" &&
+          pumpIdParam !== "null" &&
+          pumpIdParam !== "undefined"
           ? Number(pumpIdParam)
           : null;
       const pumpFilter =
@@ -2407,7 +2407,7 @@ export function registerRoutes(app: Express) {
         if (error) {
           const errorMessage = error.message || "Failed to update assignments";
           console.error("Assignment update error:", error);
-          return res.status(500).json({ 
+          return res.status(500).json({
             message: errorMessage,
             details: error.details || null
           });
@@ -2476,9 +2476,9 @@ export function registerRoutes(app: Express) {
         const existingAssignmentIds = (existingAssignments || []).map((a: any) => a.id);
         const { data: existingAllocations } = existingAssignmentIds.length > 0
           ? await supabase
-              .from("assignment_batch_allocations")
-              .select("assignment_id, batch_id")
-              .in("assignment_id", existingAssignmentIds)
+            .from("assignment_batch_allocations")
+            .select("assignment_id, batch_id")
+            .in("assignment_id", existingAssignmentIds)
           : { data: [] };
 
         // Count current items per pump
@@ -2577,28 +2577,28 @@ export function registerRoutes(app: Express) {
       const pumpIdParam = pump_id ?? "";
       const parsedPumpId =
         pumpIdParam &&
-        pumpIdParam !== "all" &&
-        pumpIdParam !== "null" &&
-        pumpIdParam !== "undefined"
+          pumpIdParam !== "all" &&
+          pumpIdParam !== "null" &&
+          pumpIdParam !== "undefined"
           ? Number(pumpIdParam)
           : null;
       const pumpFilter =
         parsedPumpId != null && !Number.isNaN(parsedPumpId) ? parsedPumpId : null;
       const hasPumpFilter = pumpFilter != null;
-      
+
       // Parse employee filter
       const employeeIdParam = employee_id ?? "";
       const parsedEmployeeId =
         employeeIdParam &&
-        employeeIdParam !== "all" &&
-        employeeIdParam !== "null" &&
-        employeeIdParam !== "undefined"
+          employeeIdParam !== "all" &&
+          employeeIdParam !== "null" &&
+          employeeIdParam !== "undefined"
           ? Number(employeeIdParam)
           : null;
       const employeeFilter =
         parsedEmployeeId != null && !Number.isNaN(parsedEmployeeId) ? parsedEmployeeId : null;
       const hasEmployeeFilter = employeeFilter != null;
-      
+
       let filteredAssetIds: number[] | null = null;
 
       // 1. Pre-filter assets IDs if a station is selected
@@ -2659,7 +2659,7 @@ export function registerRoutes(app: Express) {
       let employeeAssignmentsData: any[] = [];
       let employeeNameMap = new Map<number, string>();
       let employeeAssetIdsSet = new Set<number>();
-      
+
       // Always fetch employee assignments to include them in "View All" mode
       // If filtering by employee, only fetch that employee's assignments
       if (hasEmployeeFilter) {
@@ -2669,12 +2669,12 @@ export function registerRoutes(app: Express) {
           .select("id, name")
           .eq("id", employeeFilter)
           .maybeSingle();
-        
-        
+
+
         if (!empNameError && employeeData) {
           employeeNameMap.set(employeeFilter, employeeData.name);
         }
-        
+
         const { data: empAssignments, error: empAssignError } = await supabase
           .from("employee_asset_assignments")
           .select(`
@@ -2688,7 +2688,7 @@ export function registerRoutes(app: Express) {
           `)
           .eq("employee_id", employeeFilter)
           .eq("is_active", true);
-        
+
         if (!empAssignError && empAssignments) {
           employeeAssignmentsData = empAssignments || [];
           // Collect asset IDs from employee assignments
@@ -2712,9 +2712,9 @@ export function registerRoutes(app: Express) {
             batch:asset_purchase_batches!inner(id, asset_id, purchase_price)
           `)
           .eq("is_active", true);
-        
+
         const { data: empAssignments, error: empAssignError } = await empAssignQuery;
-        
+
         console.log(`[DEBUG] Fetched ${empAssignments?.length || 0} employee assignments`);
         if (empAssignments && empAssignments.length > 0) {
           const sample = empAssignments[0] as any;
@@ -2727,10 +2727,10 @@ export function registerRoutes(app: Express) {
             barcode: sample.barcode
           });
         }
-        
+
         if (!empAssignError && empAssignments) {
           employeeAssignmentsData = empAssignments;
-          
+
           // Collect asset IDs from employee assignments
           empAssignments.forEach((ea: any) => {
             const batch = ea.batch as any;
@@ -2740,7 +2740,7 @@ export function registerRoutes(app: Express) {
           });
           console.log(`[DEBUG] Collected ${employeeAssetIdsSet.size} unique asset IDs from employee assignments`);
           console.log(`[DEBUG] Collected ${employeeAssetIdsSet.size} unique asset IDs from employee assignments`);
-          
+
           // Build employee name map for all employees in the results
           const employeeIds = Array.from(new Set(employeeAssignmentsData.map((ea: any) => ea.employee_id).filter((id: any) => id != null)));
           if (employeeIds.length > 0) {
@@ -2748,7 +2748,7 @@ export function registerRoutes(app: Express) {
               .from("employees")
               .select("id, name")
               .in("id", employeeIds);
-            
+
             if (!empNameError && allEmployees) {
               allEmployees.forEach((emp: any) => {
                 employeeNameMap.set(emp.id, emp.name);
@@ -2762,7 +2762,7 @@ export function registerRoutes(app: Express) {
           }
         }
       }
-      
+
       // 3. Combine asset IDs: include both station-assigned assets AND employee-assigned assets
       // Also get asset IDs from station assignments if not already filtered
       if (!filteredAssetIds) {
@@ -2770,7 +2770,7 @@ export function registerRoutes(app: Express) {
         const { data: allStationAssignments, error: stationAssignError } = await supabase
           .from("asset_assignments")
           .select("asset_id");
-        
+
         if (!stationAssignError && allStationAssignments) {
           const stationAssetIds = Array.from(new Set(allStationAssignments.map((a: any) => a.asset_id)));
           filteredAssetIds = stationAssetIds;
@@ -2778,7 +2778,7 @@ export function registerRoutes(app: Express) {
           filteredAssetIds = [];
         }
       }
-      
+
       // Merge employee-assigned asset IDs with station-assigned asset IDs
       if (employeeAssetIdsSet.size > 0) {
         const employeeAssetIdsArray = Array.from(employeeAssetIdsSet);
@@ -2791,7 +2791,7 @@ export function registerRoutes(app: Express) {
           filteredAssetIds = employeeAssetIdsArray;
         }
       }
-      
+
       // 4. Fetch Assets (now including assets with both station AND employee assignments)
       let assetQuery = supabase
         .from("assets")
@@ -2834,7 +2834,7 @@ export function registerRoutes(app: Express) {
             if (empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id) {
               // Get employee name from the map we created
               const employeeName = employeeNameMap.get(empAssign.employee_id) || null;
-              
+
               const resultItem = {
                 ...asset,
                 // Explicitly override all station-related fields to null
@@ -2848,8 +2848,8 @@ export function registerRoutes(app: Express) {
                 barcode: empAssign.barcode || null,
                 assignmentValue: empAssign.batch.purchase_price || 0,
               };
-              
-              
+
+
               result.push(resultItem);
             }
           });
@@ -2873,7 +2873,7 @@ export function registerRoutes(app: Express) {
           // Check if this asset has employee assignments
           if (!hasEmployeeFilter) {
             const assetBatchIds = new Set((asset.batches || []).map((b: any) => b.id));
-            const hasEmployeeAssignments = employeeAssignmentsData.some((empAssign: any) => 
+            const hasEmployeeAssignments = employeeAssignmentsData.some((empAssign: any) =>
               empAssign.batch && assetBatchIds.has(empAssign.batch.id) && empAssign.batch.asset_id === asset.id
             );
             if (!hasEmployeeAssignments) {
@@ -2889,7 +2889,7 @@ export function registerRoutes(app: Express) {
         // Include batch_allocations with serial_number and barcode if they exist
         relevantAssignments.forEach((assignment: any) => {
           const batchAllocations = assignment.batch_allocations || [];
-          
+
           // ONLY create rows for items that have batch allocations (serial numbers/barcodes)
           // Skip assignments without individual item identifiers - we only want to show items, not assets
           if (batchAllocations.length > 0) {
@@ -2903,10 +2903,10 @@ export function registerRoutes(app: Express) {
                 employee_id: null,
                 serial_number: alloc.serial_number || null,
                 barcode: alloc.barcode || null,
-                assignmentValue: alloc.asset_purchase_batches?.purchase_price || 
+                assignmentValue: alloc.asset_purchase_batches?.purchase_price ||
                   (assignment.assignment_value ??
-                  Number(assignment.quantity || 0) *
-                  (Number(asset.asset_value) || 0)),
+                    Number(assignment.quantity || 0) *
+                    (Number(asset.asset_value) || 0)),
               });
             });
           }
@@ -2920,7 +2920,7 @@ export function registerRoutes(app: Express) {
           const assetBatchIds = new Set((asset.batches || []).map((b: any) => b.id));
           console.log(`[DEBUG] Processing asset ${asset.id} (${asset.asset_name}), batch IDs:`, Array.from(assetBatchIds));
           console.log(`[DEBUG] Total employee assignments to check: ${employeeAssignmentsData.length}`);
-          
+
           let matchedCount = 0;
           employeeAssignmentsData.forEach((empAssign: any) => {
             const batch = empAssign.batch as any;
@@ -2934,18 +2934,18 @@ export function registerRoutes(app: Express) {
             }
           });
           console.log(`[DEBUG] Matched ${matchedCount} employee assignments for asset ${asset.id}`);
-          
+
           employeeAssignmentsData.forEach((empAssign: any) => {
             const batch = empAssign.batch as any;
             if (batch && assetBatchIds.has(batch.id) && batch.asset_id === asset.id) {
               const employeeName = employeeNameMap.get(empAssign.employee_id) || null;
-              
+
               // Debug logging
               if (!employeeName && empAssign.employee_id) {
                 console.log(`Warning: Employee name not found for employee_id ${empAssign.employee_id}`);
                 console.log(`EmployeeNameMap keys:`, Array.from(employeeNameMap.keys()));
               }
-              
+
               result.push({
                 ...asset,
                 pump_id: null,
@@ -3019,18 +3019,18 @@ export function registerRoutes(app: Express) {
         .order("purchase_date", { ascending: true });
 
       if (error) return res.status(500).json({ message: error.message });
-      
+
       // Get employee assignment counts per batch
       const batchIds = (data || []).map((b: any) => b.id);
       let employeeAssignmentCounts = new Map<number, number>();
-      
+
       if (batchIds.length > 0) {
         const { data: employeeAssignments } = await supabase
           .from("employee_asset_assignments")
           .select("batch_id, is_active")
           .in("batch_id", batchIds)
           .eq("is_active", true);  // Only count active assignments
-        
+
         if (employeeAssignments) {
           employeeAssignments.forEach((assignment: any) => {
             // Only count active assignments
@@ -3041,19 +3041,19 @@ export function registerRoutes(app: Express) {
           });
         }
       }
-      
+
       // Enrich batches with employee assignment counts
       const enrichedBatches = (data || []).map((batch: any) => {
         const employeeAssignedCount = employeeAssignmentCounts.get(batch.id) || 0;
         const employeeRemainingQuantity = Number(batch.quantity) - employeeAssignedCount;
-        
+
         return {
           ...batch,
           employee_assigned_count: employeeAssignedCount,
           employee_remaining_quantity: employeeRemainingQuantity,
         };
       });
-      
+
       return res.json(enrichedBatches);
     } catch (e: any) {
       return res.status(500).json({ message: e?.message || "Internal error" });
@@ -3260,7 +3260,7 @@ export function registerRoutes(app: Express) {
         password_hash: password, // In production, hash this with bcrypt
         role: role.trim(), // Ensure role is trimmed
       };
-      
+
       console.log("[ACCOUNT CREATION] Inserting user with data:", { username: insertData.username, role: insertData.role });
 
       const { data, error } = await supabase
@@ -3305,7 +3305,7 @@ export function registerRoutes(app: Express) {
         return res.status(404).json({ message: "User not found" });
       }
 
-      res.json({ 
+      res.json({
         user: data,
         roleCheck: {
           isAdmin: data.role === 'admin',

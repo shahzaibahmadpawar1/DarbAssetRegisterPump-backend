@@ -24,7 +24,8 @@ const allowedOrigins = [
   "http://ams.darbstations.com.sa",
   "https://www.ams.darbstations.com.sa",
   "http://stg.ams.darbstations.com.sa",
-  "https://stg.ams.darbstations.com.sa"
+  "https://stg.ams.darbstations.com.sa",
+  "http://localhost:5173"
   // dev
 ];
 

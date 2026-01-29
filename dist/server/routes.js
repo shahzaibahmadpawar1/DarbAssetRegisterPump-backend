@@ -625,7 +625,7 @@ function registerRoutes(app) {
         };
         // Determine if we're in production based on origin
         const origin = req.headers.origin || "";
-        const isProduction = origin.includes("ams.darbstations.com.sa") || process.env.NODE_ENV === "production";
+        const isProduction = origin.includes("stg.ams.darbstations.com.sa") || process.env.NODE_ENV === "production";
         if (isProduction) {
             cookieOptions.secure = true;
             cookieOptions.sameSite = "none";
