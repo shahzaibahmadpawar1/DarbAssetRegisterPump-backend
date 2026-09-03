@@ -21,10 +21,6 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 // ===============================
 const allowedOrigins = [
   "https://ams.darbstations.com.sa",
-  "http://ams.darbstations.com.sa",
-  "https://www.ams.darbstations.com.sa",
-  "http://stg.ams.darbstations.com.sa",
-  "https://stg.ams.darbstations.com.sa",
   "http://localhost:5173",
   "http://localhost:5174"
   // dev
