@@ -22,7 +22,9 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "replace-me";
 const allowedOrigins = [
   "https://ams.darbstations.com.sa",
   "http://localhost:5173",
-  "http://localhost:5174"
+  "http://localhost:5174",
+  "https://www.ams.nocastra.com",
+  "https://ams.nocastra.com"
   // dev
 ];
 
